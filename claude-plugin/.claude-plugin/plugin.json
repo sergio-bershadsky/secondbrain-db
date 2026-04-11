@@ -1,0 +1,12 @@
+{
+  "name": "secondbrain-db",
+  "version": "0.1.0",
+  "description": "Pydantic-style ORM + semantic search over markdown KBs — query, repair, and verify from Claude Code",
+  "author": {
+    "name": "Sergey Bershadsky"
+  },
+  "homepage": "https://github.com/sergio-bershadsky/secondbrain-db",
+  "repository": "https://github.com/sergio-bershadsky/secondbrain-db",
+  "license": "MIT",
+  "keywords": ["markdown", "knowledge-base", "orm", "semantic-search", "yaml", "integrity"]
+}

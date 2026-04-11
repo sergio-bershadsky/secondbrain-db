@@ -1,0 +1,41 @@
+# Binaries
+sbdb
+secondbrain-db
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+dist/
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.html
+
+# Go workspace
+go.work
+go.work.sum
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Integrity key — NEVER commit
+.sbdb-integrity.key
+integrity.key
+
+# Local config overrides
+.sbdb.local.toml
+
+# Semantic index (large binary files)
+.index/
