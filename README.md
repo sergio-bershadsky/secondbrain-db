@@ -431,6 +431,78 @@ integrity: strict             # "strict", "warn", or "off"
 - **Integrity manifest** tracks SHA-256 of content, frontmatter, and record for every doc
 - **Doctor** detects drift (frontmatter vs record) and tamper (hash mismatch)
 
+## Compatibility
+
+sbdb layers on top of existing markdown tools — it doesn't replace them. Your wiki/docs site keeps working exactly as before; sbdb adds typed schemas, integrity verification, a knowledge graph, and semantic search.
+
+### How sbdb works alongside your tools
+
+| Tool | Compatibility | How it integrates |
+|------|---------------|-------------------|
+| **Obsidian** | Full | Same YAML frontmatter format. sbdb reads/writes frontmatter that Obsidian understands. `[[wikilinks]]` can be extracted as graph edges via virtual fields. Obsidian vault = sbdb knowledge base. |
+| **VitePress** | Full | sbdb manages the `docs/` directory that VitePress serves. VitePress data loaders can read `records.yaml` for dynamic tables. Crawl mode indexes all pages including index files with Vue components. |
+| **Docusaurus** | Full | Same frontmatter convention. `.mdx` files indexed via crawl mode. Sidebars are independent of sbdb. |
+| **Jekyll** | Full | Jekyll's YAML frontmatter IS sbdb's frontmatter — identical format. `_posts/` maps directly to a schema with monthly partitions. |
+| **MkDocs** | Full | Standard markdown + optional YAML frontmatter. sbdb adds structure without changing what MkDocs reads. |
+| **Hugo** | Partial | Hugo supports YAML frontmatter (default is TOML). Use `---` delimiters for YAML mode and sbdb works seamlessly. |
+| **Notion** (exported) | Full | Export as markdown, then `sbdb index build --crawl` to index everything. No schema needed for crawl mode. |
+| **Plain markdown** | Full | Any directory of `.md` files works with `sbdb index build --crawl`. No frontmatter required. |
+
+### Integration patterns
+
+**Pattern 1: Schema-managed entities** (structured data)
+
+Best for: ADRs, meeting notes, incident reports — anything with a repeatable structure.
+
+```bash
+sbdb init --template notes    # creates schemas/ + .sbdb.toml
+sbdb create --input -         # create via CLI, writes .md + records.yaml
+sbdb query --filter ...       # fast structured queries
+```
+
+sbdb writes both the `.md` file and `records.yaml`. Your wiki tool renders the `.md` files as pages.
+
+**Pattern 2: Crawl mode** (unstructured content)
+
+Best for: existing wikis, guides, architecture docs — content that doesn't follow a schema.
+
+```bash
+sbdb index build --crawl      # walks docs/, indexes everything
+sbdb search "topic" --semantic # semantic search across all pages
+sbdb graph export --export-format json  # knowledge graph from markdown links
+```
+
+No schema needed. sbdb extracts titles from `# headings`, entities from directory names, and edges from `[markdown](links.md)`.
+
+**Pattern 3: Hybrid** (both together)
+
+Use schemas for structured entities (notes, ADRs) and crawl mode for everything else. Both coexist in the same SQLite knowledge graph.
+
+```bash
+# Schema-backed
+sbdb create -s notes --input -
+sbdb query -s notes --filter status=active
+
+# Crawl the rest
+sbdb index build --crawl --docs-dir docs/
+
+# Search across everything
+sbdb search "deployment" --semantic
+```
+
+### What sbdb adds to your existing workflow
+
+```
+Your existing tool         sbdb adds
+─────────────────         ─────────────
+.md files              →  typed schemas + validation
+YAML frontmatter       →  scalar/complex field routing + records.yaml index
+manual editing         →  integrity signing (SHA-256 + HMAC tamper detection)
+file browsing          →  QuerySet with filters, ordering, pagination
+Ctrl+F                 →  semantic search (embeddings + cosine similarity)
+mental model           →  knowledge graph (auto-extracted from links + refs)
+```
+
 ## AI agent integration
 
 Every command outputs structured JSON when piped or with `--format json`. Exit codes are stable (0=ok, 2=not found, 3=validation, 4=drift, 6=tamper). Designed as a CLI API for Claude Code and other AI agents.
