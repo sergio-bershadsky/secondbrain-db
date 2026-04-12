@@ -507,7 +507,7 @@ mental model           →  knowledge graph (auto-extracted from links + refs)
 
 Every command outputs structured JSON when piped or with `--format json`. Exit codes are stable (0=ok, 2=not found, 3=validation, 4=drift, 6=tamper). Designed as a CLI API for Claude Code and other AI agents.
 
-A Claude Code plugin is included in `claude-plugin/`.
+A Claude Code plugin is available via the [bershadsky-claude-tools marketplace](https://github.com/sergio-bershadsky/ai). Install with: `/plugin marketplace add sergio-bershadsky/ai` then `/plugin install secondbrain-db`.
 
 ## License
 
