@@ -6,6 +6,27 @@
 
 A file-backed knowledge base ORM. Define schemas in YAML, compute virtual fields with Starlark, query with a chainable filter API, and verify integrity with SHA-256 + HMAC signing. Single static binary, designed as an AI-agent API layer.
 
+## Why this exists
+
+Knowledge lives in markdown files. Teams write ADRs, meeting notes, guides, and architecture docs as `.md` files with YAML frontmatter, then serve them through VitePress, Docusaurus, Obsidian, or Jekyll. This works until it doesn't.
+
+The problems start quietly. A frontmatter field says `status: active` but the YAML index says `status: draft`. Someone edits a file by hand and breaks the frontmatter format. A new team member creates a discussion note in the wrong directory. An AI agent rewrites a doc and silently drops three metadata fields. Six months in, nobody trusts the data, searches return stale results, and the knowledge base has become a knowledge graveyard.
+
+The root cause is that **markdown files are treated as dumb text when they're actually structured data**. They have schemas (frontmatter fields), relationships (links between docs), computed properties (title from heading, word count, ticket references), and lifecycle states (draft, active, archived). But nothing enforces this structure. Nothing detects when it breaks. Nothing connects the dots between documents.
+
+`secondbrain-db` exists because knowledge bases deserve the same guarantees that databases take for granted:
+
+- **Schema validation** — a note with `status: invalid` is rejected, not silently accepted
+- **Integrity signing** — every file is hashed; hand-edits are detected, not lost in the noise
+- **Computed fields** — the title is extracted from the `# heading` once, not maintained by hand in two places
+- **Queryable indexes** — filtering 1,000 records reads one YAML file, not 1,000 markdown files
+- **Relationship tracking** — when doc A links to doc B, that relationship is a first-class edge in a knowledge graph, not a string buried in prose
+- **Two-tier tracking** — structured entities get full ORM treatment; unstructured pages (templates, index pages, guides) still get integrity signing and graph inclusion
+
+The tool is deliberately a **single static binary** (`sbdb`) that operates on **plain files on disk**. No database server. No lock-in. Your docs stay as markdown files that any tool can read. `sbdb` layers structure, integrity, and intelligence on top — and gets out of the way when you don't need it.
+
+It's also designed as an **API layer for AI agents**. Every command outputs structured JSON. Exit codes are stable and semantic. Schema introspection is self-describing. A Claude Code plugin ships with integrity hooks that automatically detect and fix drift after every edit. The premise is simple: if an AI is going to help maintain your knowledge base, the knowledge base needs to be able to tell the AI when something is wrong.
+
 ## Install
 
 ```bash
