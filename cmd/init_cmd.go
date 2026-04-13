@@ -19,7 +19,7 @@ var initCmd = &cobra.Command{
 }
 
 func init() {
-	initCmd.Flags().StringVar(&initTemplate, "template", "notes", "template: notes, blog, adr")
+	initCmd.Flags().StringVar(&initTemplate, "template", "notes", "template: notes, blog, adr, discussion, task")
 	rootCmd.AddCommand(initCmd)
 }
 
@@ -145,6 +145,84 @@ virtuals:
               if "**Status:**" in line:
                   return line.split("**Status:**")[1].strip().lower()
           return "draft"
+`
+	case "discussion":
+		return `version: 1
+entity: discussions
+docs_dir: docs/discussions
+filename: "{id}.md"
+records_dir: data/discussions
+partition: monthly
+date_field: date
+id_field: id
+integrity: strict
+
+fields:
+  id:           { type: string, required: true }
+  date:         { type: date, required: true }
+  topic:        { type: string, required: true }
+  participants: { type: list, items: { type: string } }
+  source:       { type: enum, values: [manual, meeting, slack, fireflies, otter, telegram, email], default: manual }
+  meeting_id:   { type: string }
+  tags:         { type: list, items: { type: string } }
+  status:       { type: enum, values: [documented, pending-review, archived], default: documented }
+
+virtuals:
+  title:
+    returns: string
+    source: |
+      def compute(content, fields):
+          for line in content.splitlines():
+              if line.startswith("# "):
+                  return line.removeprefix("# ").strip()
+          return fields["topic"]
+`
+	case "task":
+		return `version: 1
+entity: tasks
+docs_dir: docs/tasks
+filename: "{id}.md"
+records_dir: data/tasks
+partition: none
+id_field: id
+integrity: strict
+
+fields:
+  id:             { type: string, required: true }
+  number:         { type: int, required: true }
+  title:          { type: string, required: true }
+  status:         { type: enum, values: [todo, in_progress, blocked, done, canceled], default: todo }
+  priority:       { type: enum, values: [low, medium, high, critical], default: medium }
+  created:        { type: date, required: true }
+  due_date:       { type: date }
+  completed_date: { type: date }
+  assignee:       { type: string }
+  tags:           { type: list, items: { type: string } }
+
+virtuals:
+  title_from_content:
+    returns: string
+    source: |
+      def compute(content, fields):
+          for line in content.splitlines():
+              if line.startswith("# "):
+                  return line.removeprefix("# ").strip()
+          return fields["title"]
+  checklist_progress:
+    returns: string
+    source: |
+      def compute(content, fields):
+          done = 0
+          total = 0
+          for line in content.splitlines():
+              if line.strip().startswith("- [x]"):
+                  done += 1
+                  total += 1
+              elif line.strip().startswith("- [ ]"):
+                  total += 1
+          if total == 0:
+              return "0/0"
+          return str(done) + "/" + str(total)
 `
 	default: // notes
 		return `version: 1
