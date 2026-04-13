@@ -110,7 +110,7 @@ func (d *Document) resolveFilename() string {
 	}
 	clean := filepath.Clean(filename)
 	if strings.Contains(clean, "..") {
-		return d.ID() + ".md"
+		return "untitled.md"
 	}
 	return clean
 }

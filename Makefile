@@ -29,8 +29,8 @@ cover:
 	@echo "---"
 	@COVERAGE=$$(go tool cover -func=coverage.out | grep total | awk '{print $$3}' | tr -d '%'); \
 	echo "Total coverage: $${COVERAGE}%"; \
-	if [ $$(echo "$${COVERAGE} < 60" | bc -l) -eq 1 ]; then \
-		echo "FAIL: coverage $${COVERAGE}% < 60% threshold"; exit 1; \
+	if [ $$(echo "$${COVERAGE} < 70" | bc -l) -eq 1 ]; then \
+		echo "FAIL: coverage $${COVERAGE}% < 70% threshold"; exit 1; \
 	fi
 
 clean:
