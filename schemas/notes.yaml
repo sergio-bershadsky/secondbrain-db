@@ -3,7 +3,8 @@ entity: notes
 docs_dir: docs/notes
 filename: "{id}.md"
 records_dir: data/notes
-partition: none
+partition: monthly
+date_field: created
 id_field: id
 integrity: strict
 

@@ -183,7 +183,8 @@ entity: tasks
 docs_dir: docs/tasks
 filename: "{id}.md"
 records_dir: data/tasks
-partition: none
+partition: monthly
+date_field: created
 id_field: id
 integrity: strict
 
@@ -230,7 +231,8 @@ entity: notes
 docs_dir: docs/notes
 filename: "{id}.md"
 records_dir: data/notes
-partition: none
+partition: monthly
+date_field: created
 id_field: id
 integrity: strict
 
