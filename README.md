@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Go Report Card](https://goreportcard.com/badge/github.com/sergio-bershadsky/secondbrain-db)](https://goreportcard.com/report/github.com/sergio-bershadsky/secondbrain-db)
 
-A file-backed knowledge base ORM. Define schemas in YAML, compute virtual fields with Starlark, query with a Django-style API, and verify integrity with SHA-256 + HMAC signing. Single static binary, designed as an AI-agent API layer.
+A file-backed knowledge base ORM. Define schemas in YAML, compute virtual fields with Starlark, query with a chainable filter API, and verify integrity with SHA-256 + HMAC signing. Single static binary, designed as an AI-agent API layer.
 
 ## Install
 
