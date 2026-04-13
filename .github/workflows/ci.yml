@@ -62,8 +62,6 @@ jobs:
         uses: vladopajic/go-test-coverage@v2
         with:
           config: ./.testcoverage.yml
-          git-token: ${{ github.token }}
-          git-branch: badges
 
   build:
     name: Build
