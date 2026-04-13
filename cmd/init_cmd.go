@@ -32,6 +32,10 @@ func runInit(cmd *cobra.Command, _ []string) error {
 	format := outputFormat(cfg)
 	basePath := cfg.BasePath
 
+	if initInteractive {
+		return runInteractiveInit(basePath, format)
+	}
+
 	// Create directories
 	dirs := []string{
 		filepath.Join(basePath, "schemas"),

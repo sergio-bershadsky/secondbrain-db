@@ -1,0 +1,125 @@
+name: "sbdb doctor check"
+description: "Run secondbrain-db integrity and drift checks on a knowledge base repository"
+author: "Sergey Bershadsky"
+
+branding:
+  icon: "shield"
+  color: "blue"
+
+inputs:
+  schema:
+    description: "Schema name to check (e.g. notes, decisions). Leave empty to check all schemas."
+    required: false
+    default: ""
+  base-path:
+    description: "Project root directory (default: repository root)"
+    required: false
+    default: "."
+  sbdb-version:
+    description: "sbdb version to install (default: latest)"
+    required: false
+    default: "latest"
+  fail-on-drift:
+    description: "Fail the check if drift is detected (default: true)"
+    required: false
+    default: "true"
+  fail-on-tamper:
+    description: "Fail the check if tamper is detected (default: true)"
+    required: false
+    default: "true"
+  check-untracked:
+    description: "Also verify untracked file integrity (default: true)"
+    required: false
+    default: "true"
+
+outputs:
+  drift-count:
+    description: "Number of drift issues found"
+    value: ${{ steps.doctor.outputs.drift_count }}
+  tamper-count:
+    description: "Number of tamper issues found"
+    value: ${{ steps.doctor.outputs.tamper_count }}
+  status:
+    description: "Overall status: clean, drift, tamper, or both"
+    value: ${{ steps.doctor.outputs.status }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install sbdb
+      shell: bash
+      run: |
+        if command -v sbdb &> /dev/null; then
+          echo "sbdb already installed: $(sbdb version)"
+        else
+          echo "Installing sbdb..."
+          go install github.com/sergio-bershadsky/secondbrain-db@${{ inputs.sbdb-version }}
+          echo "Installed: $(sbdb version)"
+        fi
+
+    - name: Run doctor check
+      id: doctor
+      shell: bash
+      env:
+        SBDB_SCHEMA: ${{ inputs.schema }}
+        SBDB_BASE_PATH: ${{ inputs.base-path }}
+      run: |
+        ARGS="--format json -b ${SBDB_BASE_PATH}"
+        if [ -n "${SBDB_SCHEMA}" ]; then
+          ARGS="${ARGS} -s ${SBDB_SCHEMA}"
+        fi
+
+        echo "Running: sbdb doctor check ${ARGS}"
+        set +e
+        RESULT=$(sbdb doctor check ${ARGS} 2>&1)
+        EXIT_CODE=$?
+        set -e
+
+        echo "Exit code: ${EXIT_CODE}"
+        echo "${RESULT}" | python3 -c "
+        import sys, json
+        try:
+            data = json.load(sys.stdin)
+            issues = data.get('data', {})
+            drift = issues.get('drift_count', 0)
+            tamper = issues.get('tamper_count', 0)
+            print(f'drift_count={drift}')
+            print(f'tamper_count={tamper}')
+            if drift == 0 and tamper == 0:
+                print('status=clean')
+            elif drift > 0 and tamper > 0:
+                print('status=both')
+            elif tamper > 0:
+                print('status=tamper')
+            else:
+                print('status=drift')
+        except:
+            print('drift_count=0')
+            print('tamper_count=0')
+            print('status=error')
+        " >> "$GITHUB_OUTPUT"
+
+        # Pretty print for the log
+        echo "### Doctor Check Results" >> "$GITHUB_STEP_SUMMARY"
+        echo "" >> "$GITHUB_STEP_SUMMARY"
+        echo '```json' >> "$GITHUB_STEP_SUMMARY"
+        echo "${RESULT}" | python3 -m json.tool >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "${RESULT}" >> "$GITHUB_STEP_SUMMARY"
+        echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+        # Determine if we should fail
+        DRIFT_COUNT=$(echo "${RESULT}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('data',{}).get('drift_count',0))" 2>/dev/null || echo "0")
+        TAMPER_COUNT=$(echo "${RESULT}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('data',{}).get('tamper_count',0))" 2>/dev/null || echo "0")
+
+        SHOULD_FAIL=false
+        if [ "${{ inputs.fail-on-drift }}" = "true" ] && [ "${DRIFT_COUNT}" -gt 0 ]; then
+          echo "::error::${DRIFT_COUNT} drift issue(s) detected"
+          SHOULD_FAIL=true
+        fi
+        if [ "${{ inputs.fail-on-tamper }}" = "true" ] && [ "${TAMPER_COUNT}" -gt 0 ]; then
+          echo "::error::${TAMPER_COUNT} tamper issue(s) detected"
+          SHOULD_FAIL=true
+        fi
+
+        if [ "${SHOULD_FAIL}" = "true" ]; then
+          exit 1
+        fi
