@@ -13,7 +13,3 @@ formatters:
   enable:
     - gofmt
     - goimports
-
-issues:
-  exclude-dirs:
-    - testdata
