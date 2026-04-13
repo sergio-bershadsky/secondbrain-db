@@ -71,12 +71,12 @@ func generateKB(t *testing.T, cfg genConfig) string {
 		// Generate content
 		var body strings.Builder
 		title := fmt.Sprintf("Document %d: %s", i, randomTopic(rng))
-		body.WriteString(fmt.Sprintf("# %s\n\n", title))
+		fmt.Fprintf(&body, "# %s\n\n", title)
 
 		// Add some sections
 		numSections := 1 + rng.Intn(4)
 		for s := 0; s < numSections; s++ {
-			body.WriteString(fmt.Sprintf("## Section %d\n\n", s+1))
+			fmt.Fprintf(&body, "## Section %d\n\n", s+1)
 			body.WriteString(randomParagraph(rng, 20+rng.Intn(cfg.MaxBodyWords)) + "\n\n")
 		}
 
@@ -84,7 +84,7 @@ func generateKB(t *testing.T, cfg genConfig) string {
 		for _, prev := range allDocs[:i] {
 			if rng.Float64() < cfg.LinkDensity {
 				relLink := fmt.Sprintf("../%s/%s.md", prev.entity, prev.id)
-				body.WriteString(fmt.Sprintf("See also [%s](%s).\n\n", prev.id, relLink))
+				fmt.Fprintf(&body, "See also [%s](%s).\n\n", prev.id, relLink)
 			}
 		}
 
