@@ -1,0 +1,23 @@
+# go-test-coverage configuration
+# https://github.com/vladopajic/go-test-coverage
+
+profile: coverage.out
+
+threshold:
+  file: 0
+  package: 50
+  total: 70
+
+override:
+  # Semantic package calls external APIs — can't test without mock server
+  - path: ^internal/semantic/.*
+    threshold: 0
+  # Version is trivial
+  - path: ^internal/version/.*
+    threshold: 0
+
+exclude:
+  # Exclude generated files
+  paths:
+    - \.pb\.go$
+    - _test\.go$

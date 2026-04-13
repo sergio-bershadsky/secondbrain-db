@@ -40,69 +40,28 @@ jobs:
           cache: true
       - name: Run all tests
         run: go test ./... -race -count=1
-      - name: Run coverage on library packages
-        if: matrix.os == 'ubuntu-latest' && matrix.go == '1.23'
-        run: go test ./internal/... -race -coverprofile=coverage.out -covermode=atomic
-      - name: Generate coverage report
-        if: matrix.os == 'ubuntu-latest' && matrix.go == '1.23'
-        run: |
-          go tool cover -func=coverage.out > coverage-report.txt
-          echo "## Test Coverage Report" > coverage-summary.md
-          echo "" >> coverage-summary.md
-          echo '```' >> coverage-summary.md
-          cat coverage-report.txt >> coverage-summary.md
-          echo '```' >> coverage-summary.md
-          echo "" >> coverage-summary.md
 
-          TOTAL=$(grep total coverage-report.txt | awk '{print $3}')
-          echo "**Total coverage: ${TOTAL}**" >> coverage-summary.md
-          echo "" >> coverage-summary.md
-
-          echo "### Per-package breakdown" >> coverage-summary.md
-          echo "" >> coverage-summary.md
-          echo "| Package | Coverage |" >> coverage-summary.md
-          echo "|---------|----------|" >> coverage-summary.md
-          grep -E "^github" coverage-report.txt | grep -v "total:" | \
-            awk -F'/' '{pkg=$NF} {cov=$NF} END{}' | true
-          go test ./internal/... -coverprofile=coverage.out -covermode=atomic 2>&1 | \
-            grep "coverage:" | \
-            sed 's|.*sergio-bershadsky/secondbrain-db/internal/||' | \
-            sed 's|\t| |g' | \
-            awk '{printf "| %s | %s |\n", $1, $NF}' >> coverage-summary.md
-
-          echo "" >> coverage-summary.md
-          THRESHOLD=70
-          COVERAGE_NUM=$(echo "${TOTAL}" | tr -d '%')
-          if [ "$(echo "${COVERAGE_NUM} < ${THRESHOLD}" | bc -l)" -eq 1 ]; then
-            echo "⚠️ Coverage ${TOTAL} is below ${THRESHOLD}% threshold" >> coverage-summary.md
-          else
-            echo "✅ Coverage ${TOTAL} meets ${THRESHOLD}% threshold" >> coverage-summary.md
-          fi
-      - name: Check coverage threshold
-        if: matrix.os == 'ubuntu-latest' && matrix.go == '1.23'
-        run: |
-          COVERAGE=$(grep total coverage-report.txt | awk '{print $3}' | tr -d '%')
-          echo "Total coverage: ${COVERAGE}%"
-          THRESHOLD=70
-          if [ "$(echo "${COVERAGE} < ${THRESHOLD}" | bc -l)" -eq 1 ]; then
-            echo "::error::Coverage ${COVERAGE}% is below ${THRESHOLD}% threshold"
-            exit 1
-          fi
-      - name: Comment coverage on PR
-        if: matrix.os == 'ubuntu-latest' && matrix.go == '1.23' && github.event_name == 'pull_request'
-        uses: marocchino/sticky-pull-request-comment@v2
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
-          path: coverage-summary.md
-      - name: Upload coverage to Codecov
-        if: matrix.os == 'ubuntu-latest' && matrix.go == '1.23'
-        uses: codecov/codecov-action@v4
+          go-version: "1.23"
+          cache: true
+      - name: Generate coverage
+        run: go test ./internal/... -coverprofile=coverage.out -covermode=atomic
+      - name: Check coverage thresholds
+        uses: vladopajic/go-test-coverage@v2
         with:
-          files: coverage.out
-          fail_ci_if_error: false
+          config: ./.testcoverage.yml
+          git-token: ${{ github.token }}
+          git-branch: badges
 
   build:
     name: Build
-    needs: [lint, test]
+    needs: [lint, test, coverage]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
