@@ -82,6 +82,7 @@ func DiscoverUnregistered(docsRoot, basePath string, schemas []*schema.Schema, r
 		if err != nil {
 			return nil
 		}
+		relPath = filepath.ToSlash(relPath) // normalize for cross-platform
 
 		class := ClassifyFile(relPath, schemas, basePath, registry)
 		if class == ClassUnregistered {

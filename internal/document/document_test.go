@@ -97,7 +97,7 @@ func TestDocument_CreateAndSave(t *testing.T) {
 	require.Len(t, records, 1)
 	assert.Equal(t, "test-note", records[0]["id"])
 	assert.Equal(t, "My Test Note", records[0]["title"])
-	assert.Equal(t, "docs/notes/test-note.md", records[0]["file"])
+	assert.Equal(t, filepath.Join("docs", "notes", "test-note.md"), records[0]["file"])
 	// Tags should NOT be in record (complex field)
 	_, hasTags := records[0]["tags"]
 	assert.False(t, hasTags, "complex fields should not be in records")

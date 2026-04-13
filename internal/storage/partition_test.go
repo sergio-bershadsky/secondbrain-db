@@ -10,16 +10,16 @@ import (
 )
 
 func TestRecordsPathForPartition_None(t *testing.T) {
-	path, err := RecordsPathForPartition("/data/notes", "none", "", nil)
+	path, err := RecordsPathForPartition(filepath.Join("data", "notes"), "none", "", nil)
 	require.NoError(t, err)
-	assert.Equal(t, "/data/notes/records.yaml", path)
+	assert.Equal(t, filepath.Join("data", "notes", "records.yaml"), path)
 }
 
 func TestRecordsPathForPartition_Monthly(t *testing.T) {
 	record := map[string]any{"date": "2026-04-08"}
-	path, err := RecordsPathForPartition("/data/meetings", "monthly", "date", record)
+	path, err := RecordsPathForPartition(filepath.Join("data", "meetings"), "monthly", "date", record)
 	require.NoError(t, err)
-	assert.Equal(t, "/data/meetings/2026-04.yaml", path)
+	assert.Equal(t, filepath.Join("data", "meetings", "2026-04.yaml"), path)
 }
 
 func TestRecordsPathForPartition_MissingDateField(t *testing.T) {

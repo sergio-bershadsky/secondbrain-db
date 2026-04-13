@@ -3,6 +3,7 @@ package integrity
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -84,6 +85,10 @@ func TestManifestExists(t *testing.T) {
 }
 
 func TestSaveKeyFile_Permissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX file permissions not supported on Windows")
+	}
+
 	dir := t.TempDir()
 	keyPath := filepath.Join(dir, "test.key")
 	key := []byte{0x01, 0x02, 0x03}

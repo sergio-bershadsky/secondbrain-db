@@ -3,6 +3,7 @@ package integrity
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -124,8 +125,10 @@ func TestSaveAndLoadKeyFile(t *testing.T) {
 	key, _ := GenerateKey()
 	require.NoError(t, SaveKeyFile(keyPath, key))
 
-	// Verify permissions
-	fi, err := os.Stat(keyPath)
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o600), fi.Mode().Perm())
+	// Verify permissions (POSIX only)
+	if runtime.GOOS != "windows" {
+		fi, err := os.Stat(keyPath)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o600), fi.Mode().Perm())
+	}
 }
