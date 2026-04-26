@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/sergio-bershadsky/secondbrain-db/compare/v1.0.0...v1.1.0) (2026-04-26)
+
+
+### Features
+
+* **events:** implement append-only event log with archival ([1d65ede](https://github.com/sergio-bershadsky/secondbrain-db/commit/1d65ede5c0c33425e5be009d0134e4efbb04a462))
+
 ## 1.0.0 (2026-04-13)
 
 
