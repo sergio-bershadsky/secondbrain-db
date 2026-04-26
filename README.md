@@ -4,7 +4,18 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Go Report Card](https://goreportcard.com/badge/github.com/sergio-bershadsky/secondbrain-db)](https://goreportcard.com/report/github.com/sergio-bershadsky/secondbrain-db)
 
-A file-backed knowledge base ORM. Define schemas in YAML, compute virtual fields with Starlark, query with a chainable filter API, and verify integrity with SHA-256 + HMAC signing. Single static binary, designed as an AI-agent API layer.
+> **Your markdown is your database. `sbdb` makes it act like one.**
+
+A file-backed knowledge base ORM with typed schemas, Starlark virtual fields, integrity signing, a knowledge graph, semantic search, and an immutable append-only event log. Single static binary. Plain files on disk. No database server. No lock-in. Designed as a stable JSON CLI so AI agents can read and write your knowledge base without breaking it.
+
+### Who will love this tool
+
+- **Engineering teams** managing ADRs, runbooks, design docs, and incident reports who want their content to be enforceable data — with tamper detection, structured queries, and semantic search instead of "grep and pray"
+- **AI-agent builders** who need a stable JSON CLI their agent can drive safely, plus an audit trail that records every change the agent makes (so reviewers can see exactly what got touched)
+- **Obsidian / VitePress / Docusaurus / MkDocs users** who already love markdown and want to add typed schemas, integrity verification, fast queries, and a real knowledge graph on top of what they have
+- **Compliance- and audit-conscious teams** who need an immutable, cryptographically verifiable record of every change to a knowledge base — without standing up a separate audit-log service
+- **Personal "second brain" practitioners** who want one static binary, no cloud, no subscription, no SaaS, full local ownership of their data
+- **Platform teams** building event-driven systems on top of knowledge — every mutation emits a JSONL event ready to fan out to SNS, SQS, Kafka, or webhooks via `git pull` + tail, no markdown re-parsing required
 
 ## Why this exists
 
@@ -22,6 +33,7 @@ The root cause is that **markdown files are treated as dumb text when they're ac
 - **Queryable indexes** — filtering 1,000 records reads one YAML file, not 1,000 markdown files
 - **Relationship tracking** — when doc A links to doc B, that relationship is a first-class edge in a knowledge graph, not a string buried in prose
 - **Two-tier tracking** — structured entities get full ORM treatment; unstructured pages (templates, index pages, guides) still get integrity signing and graph inclusion
+- **Audit trail** — every mutation emits an immutable, append-only JSONL event in `.sbdb/events/`. Workers tail the repo to stream changes downstream (SNS / SQS / Kafka / webhooks) without re-parsing markdown
 
 The tool is deliberately a **single static binary** (`sbdb`) that operates on **plain files on disk**. No database server. No lock-in. Your docs stay as markdown files that any tool can read. `sbdb` layers structure, integrity, and intelligence on top — and gets out of the way when you don't need it.
 
@@ -353,9 +365,11 @@ git checkout docs/recipes/pad-thai.md
 
 Exit codes from `doctor check`:
 - `0` — clean
-- `4` — drift (frontmatter vs record mismatch)
+- `4` — drift (frontmatter vs record mismatch, or event-window violation when an old daily file should have been archived)
 - `6` — tamper (file hash doesn't match manifest)
 - `7` — both drift and tamper
+
+`doctor fix` recovers from drift AND archives any expired event months in one pass.
 
 ### Step 10: Use multiple schemas in one project
 
@@ -443,6 +457,164 @@ id_field: <field>             # which field is the primary key (default: "id")
 integrity: strict             # "strict", "warn", or "off"
 ```
 
+## Events
+
+Every state-changing operation `sbdb` performs emits an immutable, append-only event line to `.sbdb/events/<date>.jsonl`. The events log is the repo's built-in audit trail and change feed: workers tail the repo, see what changed, stream it downstream (SNS / SQS / Kafka / webhooks), all without re-parsing markdown.
+
+The full normative spec lives in [`docs/superpowers/specs/2026-04-24-sbdb-events-design.md`](docs/superpowers/specs/2026-04-24-sbdb-events-design.md). This section is the operator-facing summary.
+
+### Enable it
+
+```toml
+# .sbdb.toml
+[events]
+enabled       = true
+window_months = 2          # always keep current + previous month live
+rotation_lines = 5000      # rotate daily file at this size
+
+[events.archive]
+target = "git"             # "git" | "s3" | "both"
+```
+
+`events.enabled = false` is the safe default; nothing is written until you opt in.
+
+### File layout
+
+```
+.sbdb/events/
+  2026-03-01.jsonl           # previous full month (live, daily files)
+  2026-03-02.jsonl
+  ...
+  2026-04-26.jsonl           # today (current month)
+  2026-04-26.001.jsonl       # rotation slice once a daily file passes 5000 lines
+  archive/
+    2026.MANIFEST.yaml       # year roll-up (line counts, hashes per month)
+    2026-02.jsonl.gz         # everything older — sealed, immutable
+    2025.MANIFEST.yaml
+    2025-12.jsonl.gz
+```
+
+The **2-month live window** is the rule: the current month and the immediately previous month exist as plain `.jsonl` (mergeable, diffable, human-readable in PRs). Anything older is sealed in `archive/` as gzipped JSONL plus a year manifest. `sbdb doctor check` reports a window violation as exit 4; `sbdb doctor fix` performs the archival.
+
+### Wire format (one event per line)
+
+```json
+{"ts":"2026-04-26T14:32:01.123Z","type":"note.created","id":"notes/2026/04/foo.md","sha":"def012","actor":"cli"}
+```
+
+Required fields: `ts` (RFC 3339 UTC), `type` (e.g. `note.created`, `x.recipe.cooked`), `id`. Optional: `sha`, `prev`, `op` (groups events from one logical operation), `phase`, `actor` (`cli` | `hook` | `worker` | `agent`), `data` (object). Hard cap: 4 KiB per line.
+
+### Built-in event catalog
+
+`sbdb event types` lists every registered type. Built-in buckets:
+
+- **Document lifecycle**: `note.{created,updated,deleted}`, `task.{created,updated,deleted,status_changed,completed}`, `adr.{created,proposed,accepted,superseded,rejected}`, `discussion.{created,updated,action_added,action_resolved}`
+- **Knowledge graph**: `graph.{node_added,node_removed,edge_added,edge_removed,reindexed}`
+- **Index / embeddings**: `kb.{indexed,chunk_added,chunk_removed,embedding_updated,model_changed}`
+- **Records**: `records.{upserted,removed,partition_rotated}`
+- **Integrity**: `integrity.{signed,recomputed,drift_detected,tamper_detected}`
+- **Review / freshness**: `review.stamped`, `freshness.stale_flagged`
+- **Meta**: `meta.{archived,event_type_registered,event_type_evolved,event_type_deprecated,config_changed}`
+- **Search** (opt-in, off by default): `search.queried`
+
+40+ types total. Renames are not a thing; a file move emits `<bucket>.deleted` + `<bucket>.created` with matching `sha` so consumers can reconstruct the rename if they care.
+
+### CLI
+
+```bash
+sbdb event types                  # list every registered type
+sbdb event show 20                # last 20 events
+sbdb event append \                # programmatic append (for hooks, scripts)
+  --type note.created \
+  --id notes/foo.md \
+  --sha abc123
+sbdb event rebuild-registry        # regenerate registry.yaml from event log
+sbdb event repair --file 2026-04-26.jsonl --truncate-partial
+                                   # explicit recovery from a crashed write
+                                   # (sbdb never auto-truncates)
+```
+
+### Author extensions: `x.*` namespace
+
+Built-in types use bare names (`note.*`, `task.*`). Author entities use `x.*` so they can never collide with current or future built-ins. Declare them in your schema:
+
+```yaml
+# schemas/recipes.yaml
+entity: x.recipe
+bucket: x.recipe
+event_types:
+  created:
+    data:
+      fields:
+        - { name: title,  type: string, required: true }
+        - { name: source, type: string }
+  updated:
+    data:
+      fields:
+        - { name: changed_keys, type: list, required: true }
+  deleted:
+    data: {}
+  cooked:
+    data:
+      fields:
+        - { name: date,   type: date, required: true }
+        - { name: rating, type: int }
+```
+
+When `sbdb doctor check` first sees the new schema, it emits `meta.event_type_registered` for every declared type and adds them to the registry projection at `internal/events/registry.yaml`. Authors who need to extend a built-in type's `data` payload nest their fields under `data.x.*` (so built-ins can never clash with author additions).
+
+### Schema evolution rules
+
+Type schemas evolve under strict additive rules. The full matrix lives in spec §6.3; the gist:
+
+| Change | Allowed |
+|---|---|
+| Add an optional field | yes |
+| Add an enum value | yes |
+| Loosen a constraint (e.g. `max_length` grows) | yes |
+| Mark deprecated, edit description | yes |
+| Add a required field | no — register a new type |
+| Rename / remove a field | no |
+| Change a type, flip required ↔ optional | no |
+| Tighten a constraint | no |
+
+Doctor enforces this on every check. Forbidden changes are rejected at registry-update time; allowed changes emit `meta.event_type_evolved` and bump the type's schema version.
+
+### Concurrency & integrity
+
+- **Lock-free**. POSIX `O_APPEND` plus the 4 KiB cap means concurrent writers — multiple goroutines, multiple sbdb subprocesses, the PostToolUse hook firing during a long sbdb command — never interleave. No `flock`, no sidecar lock files. Verified by tests at `internal/events/concurrency_test.go` and `concurrency_subprocess_test.go` (16 subprocesses × 5,000 events, zero corruption).
+- **Append-only.** sbdb never modifies an existing event line. Crash recovery is explicit: `sbdb doctor check` flags a partial trailing line; `sbdb event repair --truncate-partial` is the only path to clean it up.
+- **Tamper-evident.** Daily-file tail hashes live in the integrity manifest; archive `.gz` files have content + gz hashes recorded in `<year>.MANIFEST.yaml`. Doctor verifies all of this end-to-end.
+
+### Worker pattern
+
+Workers consuming the events stream:
+
+1. `git pull` to sync the repo.
+2. Walk `.sbdb/events/*.jsonl` in lex order.
+3. Track position as `(year, month, seq)` — stable across daily rotation, monthly archival, and rebases. Never use file paths or byte offsets as cursors.
+4. On `meta.archived` event, the worker knows everything in that month is sealed and can skip ahead or pull the gz from `archive/` (or S3) for replay.
+5. At-least-once delivery: workers MUST tolerate duplicates and key downstream effects on `(type, id, sha)`.
+
+The worker doesn't need to read markdown files at all — events carry enough to route, fan out, or summarize.
+
+### Archive targets: git or S3
+
+```toml
+[events.archive]
+target = "s3"
+
+[events.archive.s3]
+bucket        = "my-sbdb-archive"
+prefix        = "secondbrain/events/"
+region        = "us-east-1"
+storage_class = "STANDARD_IA"
+sse           = "AES256"
+auth          = "env"            # env | profile | instance | irsa
+```
+
+When `target = "s3"` (or `"both"`), each archived month gets a small `<month>.pointer.yaml` in the repo recording the SHA, line count, and S3 URI. The repo always retains the audit chain even when the gz blobs live remote. Idempotent: re-running `doctor fix` on an already-archived month is a no-op; if S3 already has the blob with matching hash, upload is skipped.
+
 ## How it works
 
 - **Scalar fields** (string, int, date, enum...) are stored in both frontmatter and `records.yaml`
@@ -450,7 +622,266 @@ integrity: strict             # "strict", "warn", or "off"
 - **Virtual fields** are computed from content via sandboxed Starlark, materialized on save
 - **Queries** read only `records.yaml` (fast, no file I/O per record)
 - **Integrity manifest** tracks SHA-256 of content, frontmatter, and record for every doc
-- **Doctor** detects drift (frontmatter vs record) and tamper (hash mismatch)
+- **Doctor** detects drift (frontmatter vs record), tamper (hash mismatch), and event-window violations
+- **Events** record every state change as an immutable JSONL line; doctor archives expired months to `git` or `s3`
+
+### Component dependency map
+
+How the internal Go packages relate. Arrows mean "imports / depends on".
+
+```
+                              ┌────────────────────┐
+                              │      cmd/*.go      │  Cobra subcommands
+                              │  create / update / │  (CLI entry points)
+                              │  delete / query /  │
+                              │  doctor / event    │
+                              └─────────┬──────────┘
+                                        │
+            ┌───────────────────────────┼───────────────────────────┐
+            │                           │                           │
+            v                           v                           v
+   ┌────────────────┐           ┌──────────────┐           ┌─────────────────┐
+   │  internal/     │           │  internal/   │           │  internal/      │
+   │  document      │◄──reads───┤  query       │           │  events         │
+   │                │           │              │           │                 │
+   │ • Save / Load  │           │ • QuerySet   │           │ • Appender (lock-
+   │ • virtuals run │           │ • filters    │           │   free O_APPEND)│
+   │ • frontmatter  │           │ • ordering   │           │ • Registry      │
+   └─┬──────┬───────┘           └──────┬───────┘           │   projection    │
+     │      │                          │                   │ • Archiver      │
+     │      │                          v                   │   (git / s3)    │
+     │      │                  ┌────────────────┐          │ • Evolution     │
+     │      │                  │  internal/     │          │   matrix        │
+     │      │                  │  storage       │◄─reads───┤                 │
+     │      │                  │                │          └────────┬────────┘
+     │      │                  │ • records.yaml │                   │
+     │      │                  │ • partitions   │                   │
+     │      │                  └────────────────┘                   │
+     │      │                                                       │
+     │      v                                                       │
+     │   ┌────────────────┐                                         │
+     │   │  internal/     │                                         │
+     │   │  schema        │  YAML schemas, EventTypes, FieldMap     │
+     │   │                │                                         │
+     │   │ • Load / Parse │                                         │
+     │   │ • event_types: │◄────────reads from schema YAML──────────┘
+     │   └────────┬───────┘
+     │            │
+     │            v
+     │   ┌────────────────┐
+     │   │  internal/     │
+     │   │  virtuals      │  Starlark sandbox
+     │   │                │
+     │   │ • compute()    │
+     │   └────────────────┘
+     v
+  ┌────────────────┐                    ┌──────────────┐
+  │  internal/     │                    │  internal/   │
+  │  integrity     │───signs/verifies──►│  kg          │  SQLite knowledge graph
+  │                │                    │              │
+  │ • SHA-256      │                    │ • nodes      │
+  │ • HMAC sig     │                    │ • edges      │
+  │ • manifest     │                    │ • chunks +   │
+  └────────┬───────┘                    │   embeddings │
+           │                            └──────┬───────┘
+           v                                   v
+  ┌─────────────────┐                  ┌──────────────────┐
+  │  data/<entity>/ │                  │  data/.sbdb.db   │
+  │  .integrity.    │                  │  (SQLite)        │
+  │  yaml           │                  │                  │
+  └─────────────────┘                  └──────────────────┘
+```
+
+Key boundaries: `cmd/` is the only thing that talks to user input or stdout. `internal/document` orchestrates a single document's lifecycle. `internal/events` is fully standalone — no imports from other internal packages — so it can be lifted out or reused. `internal/storage`, `internal/integrity`, and `internal/kg` are leaf storage services.
+
+### Write path: `sbdb create`
+
+What happens when you run `sbdb create -s notes --input -`:
+
+```
+       ┌─────────────────────┐
+       │   sbdb create       │
+       │   (cmd/create.go)   │
+       └──────────┬──────────┘
+                  │ 1. validate against schema
+                  v
+         ┌─────────────────┐
+         │ schema validate │  ◄─── reject if required fields missing
+         └────────┬────────┘
+                  │ 2. construct Document
+                  v
+       ┌──────────────────────┐
+       │ document.New + Save  │
+       └──────────┬───────────┘
+                  │
+        ┌─────────┼──────────┬───────────────┐
+        │         │          │               │
+        v         v          v               v
+   ┌────────┐ ┌────────┐ ┌──────────┐  ┌─────────────┐
+   │ run    │ │ write  │ │ upsert   │  │ sign with   │
+   │ Stark- │ │ .md +  │ │ records. │  │ HMAC →      │
+   │ lark   │ │ front- │ │ yaml     │  │ .integrity. │
+   │ virt-  │ │ matter │ │          │  │ yaml        │
+   │ uals   │ │        │ │          │  │             │
+   └────────┘ └────────┘ └──────────┘  └─────────────┘
+                  │
+                  │ 3. emit event (if events.enabled)
+                  v
+       ┌──────────────────────────┐
+       │ events.Emitter.Emit()    │
+       │  • registry-validate     │
+       │  • marshal line ≤ 4 KiB  │
+       │  • O_APPEND single write │
+       └──────────┬───────────────┘
+                  v
+        .sbdb/events/2026-04-26.jsonl
+        {"ts":"...","type":"note.created","id":"...","sha":"..."}
+                  │
+                  │ 4. print result JSON to stdout
+                  v
+              ┌────────┐
+              │ stdout │
+              └────────┘
+```
+
+A failure at any step before the event emit aborts cleanly with no partial state. The event emit itself is best-effort: if disk is full at that exact moment, the CRUD already succeeded and the next sbdb invocation will pick up an audit gap detectable via integrity.
+
+### Doctor + archival flow
+
+What `sbdb doctor check` and `sbdb doctor fix` do, in order:
+
+```
+            sbdb doctor check                       sbdb doctor fix
+            ─────────────────                       ───────────────
+                  │                                       │
+                  v                                       v
+       ┌──────────────────┐                  ┌──────────────────────┐
+       │ load schema +    │                  │ same load steps      │
+       │ records +        │                  └──────────┬───────────┘
+       │ manifest         │                             │
+       └────────┬─────────┘                             v
+                │                              ┌────────────────┐
+                v                              │ for each doc:  │
+       ┌──────────────────┐                    │  doc.Save(rt)  │  fix drift by
+       │ for each doc:    │                    │   — re-runs    │  re-running
+       │  • check drift   │                    │     virtuals   │  the save
+       │  • check tamper  │                    │   — re-syncs   │  pipeline
+       └────────┬─────────┘                    │     records    │
+                │                              │   — re-signs   │
+                v                              └──────┬─────────┘
+       ┌──────────────────┐                           │
+       │ check event-     │                           v
+       │ window invariant │                  ┌────────────────────┐
+       │ (any expired     │                  │ Archiver.Archive-  │
+       │ daily file?)     │                  │ Expired():         │
+       └────────┬─────────┘                  │  • group by month  │
+                │                            │  • gzip + verify   │
+                v                            │  • upload to       │
+        Exit:                                │    git or S3       │
+        0 = clean                            │  • write year      │
+        4 = drift OR window violation        │    manifest        │
+        6 = tamper                           │  • emit            │
+        7 = both                             │    meta.archived   │
+                                             │  • remove dailies  │
+                                             └────────────────────┘
+```
+
+### Events: live → archive lifecycle
+
+How a single event line travels from emission to long-term storage:
+
+```
+T0     CRUD or doctor run                            sbdb internal call
+       ────────────────────                          ──────────────────
+                │
+                │ events.Emitter.Emit(event)
+                v
+T0+5ms  ┌──────────────────────────────┐
+        │ .sbdb/events/2026-04-26.jsonl│  ← append-only,
+        │                              │     lock-free,
+        │ {"ts":"…","type":"note.      │     ≤ 4 KiB / line
+        │   created","id":"…"}         │
+        └──────────────────────────────┘
+                │
+                │ (file grows past 5000 lines → rotate)
+                v
+        ┌──────────────────────────────┐
+        │ 2026-04-26.001.jsonl         │   slice 001
+        │ 2026-04-26.002.jsonl         │   slice 002
+        └──────────────────────────────┘
+
+T+~62 days  current = July, previous = June, May is now expired
+            sbdb doctor fix
+                │
+                │ Archiver.archiveMonth(2026, 5)
+                v
+        ┌─────────────────────────────────────┐
+        │  concat 2026-05-*.jsonl → gzip → tmp│
+        │  verify: line count + tail hash     │
+        │  → upload via target (git or S3)    │
+        │  → write archive/2026.MANIFEST.yaml │
+        │  → emit meta.archived event         │
+        │  → remove daily files               │
+        └─────────────────────────────────────┘
+                │
+                v
+        ┌──────────────────────────────────────┐
+        │  archive/2026-05.jsonl.gz            │  immutable
+        │  archive/2026.MANIFEST.yaml          │  growing index
+        │  archive/2026-05.pointer.yaml (S3)   │  if S3 target
+        └──────────────────────────────────────┘
+                │
+                │ Workers see meta.archived in live stream
+                v
+       ┌──────────────────────────┐
+       │ worker advances cursor   │
+       │ no need to read archive  │
+       │ unless replaying history │
+       └──────────────────────────┘
+```
+
+### Worker fan-out
+
+How an external worker consumes events from `main`:
+
+```
+                  ┌──────────────────────────┐
+                  │  GitHub / GitLab repo    │
+                  │  (main branch)           │
+                  │                          │
+                  │  .sbdb/events/*.jsonl    │
+                  └────────────┬─────────────┘
+                               │  on push to main
+                               v
+                  ┌──────────────────────────┐
+                  │  Worker process          │
+                  │                          │
+                  │  • git pull              │
+                  │  • read events since     │
+                  │    last (year, mon, seq) │
+                  │  • for each new line:    │
+                  └──────┬─────────────┬─────┘
+                         │             │
+              ┌──────────┘             └──────────┐
+              v                                   v
+    ┌──────────────────┐                ┌──────────────────┐
+    │  publish to SNS  │                │  publish to      │
+    │  topic per type  │                │  Kafka topic     │
+    └──────────────────┘                │  per bucket      │
+                                        └──────────────────┘
+              │                                   │
+              v                                   v
+    ┌──────────────────┐                ┌──────────────────┐
+    │  Lambda / SQS    │                │  Stream          │
+    │  consumers       │                │  processors      │
+    │                  │                │                  │
+    │  • notify Slack  │                │  • update search │
+    │  • CRM webhook   │                │    index         │
+    │  • email digest  │                │  • analytics     │
+    └──────────────────┘                └──────────────────┘
+```
+
+The repo is the broker. The events directory is the topic. `git pull` is the subscription protocol. No separate infrastructure required to start.
 
 ## Compatibility
 
@@ -522,13 +953,25 @@ manual editing         →  integrity signing (SHA-256 + HMAC tamper detection)
 file browsing          →  QuerySet with filters, ordering, pagination
 Ctrl+F                 →  semantic search (embeddings + cosine similarity)
 mental model           →  knowledge graph (auto-extracted from links + refs)
+git log                →  append-only event stream (.sbdb/events/*.jsonl) workers can tail
 ```
 
 ## AI agent integration
 
-Every command outputs structured JSON when piped or with `--format json`. Exit codes are stable (0=ok, 2=not found, 3=validation, 4=drift, 6=tamper). Designed as a CLI API for Claude Code and other AI agents.
+Every command outputs structured JSON when piped or with `--format json`. Exit codes are stable (0=ok, 2=not found, 3=validation, 4=drift or event-window violation, 6=tamper). Designed as a CLI API for Claude Code and other AI agents.
 
-A Claude Code plugin is available via the [bershadsky-claude-tools marketplace](https://github.com/sergio-bershadsky/ai). Install with: `/plugin marketplace add sergio-bershadsky/ai` then `/plugin install secondbrain-db`.
+The agent also gets a built-in audit channel: every CRUD or doctor-run mutation emits an event. An agent that just edited `task.md` doesn't need to diff the file to know what happened — the next line in `.sbdb/events/<today>.jsonl` says it.
+
+### Claude Code plugin
+
+A plugin is available via the [bershadsky-claude-tools marketplace](https://github.com/sergio-bershadsky/ai). Install with: `/plugin marketplace add sergio-bershadsky/ai` then `/plugin install secondbrain-db`.
+
+The plugin ships two PreToolUse guards that protect sbdb-managed repos from out-of-band AI edits:
+
+- `guard-docs.py` — blocks Write/Edit/MultiEdit/NotebookEdit and Bash mutations targeting `docs/`. The AI must use `sbdb create / update / delete` instead.
+- `guard-events.py` — blocks any direct edit to `.sbdb/events/**` (live log) and `.sbdb/events/archive/**` (sealed archives). All event writes go through `sbdb event append` or the doctor archival path; nothing else can touch the audit log.
+
+Both guards activate only when `.sbdb.toml` is present at the repo root. They print install guidance if the `sbdb` CLI is missing.
 
 ## License
 
