@@ -1,6 +1,6 @@
 module github.com/sergio-bershadsky/secondbrain-db
 
-go 1.25.1
+go 1.25.0
 
 require (
 	github.com/mattn/go-sqlite3 v1.14.42
