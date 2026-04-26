@@ -1,14 +1,18 @@
 package cmd
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/sergio-bershadsky/secondbrain-db/internal/config"
 	"github.com/sergio-bershadsky/secondbrain-db/internal/document"
+	"github.com/sergio-bershadsky/secondbrain-db/internal/events"
 	"github.com/sergio-bershadsky/secondbrain-db/internal/integrity"
 	"github.com/sergio-bershadsky/secondbrain-db/internal/output"
 	"github.com/sergio-bershadsky/secondbrain-db/internal/query"
@@ -149,11 +153,15 @@ func runDoctorCheck(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
+	// Spec §7.5: event-window invariant check.
+	windowIssues, _ := checkEventWindow(cfg)
+
 	result := map[string]any{
-		"drift_count":  len(driftIssues),
-		"tamper_count": len(tamperIssues),
-		"drift":        driftIssues,
-		"tamper":       tamperIssues,
+		"drift_count":         len(driftIssues),
+		"tamper_count":        len(tamperIssues),
+		"drift":               driftIssues,
+		"tamper":              tamperIssues,
+		"event_window_issues": windowIssues,
 	}
 
 	if err := output.PrintData(format, result); err != nil {
@@ -162,6 +170,13 @@ func runDoctorCheck(cmd *cobra.Command, _ []string) error {
 
 	hasDrift := len(driftIssues) > 0
 	hasTamper := len(tamperIssues) > 0
+	hasWindow := len(windowIssues) > 0
+
+	// Window violations report as drift (exit 4) — they're recoverable
+	// via `sbdb doctor fix` (which performs the archival).
+	if hasWindow {
+		hasDrift = true
+	}
 
 	if hasDrift && hasTamper {
 		os.Exit(7)
@@ -172,6 +187,47 @@ func runDoctorCheck(cmd *cobra.Command, _ []string) error {
 	}
 
 	return nil
+}
+
+// checkEventWindow verifies that no live daily file lies outside the live
+// window (current month + previous month). Returns one issue per offending
+// (year, month) group.
+func checkEventWindow(cfg *config.Config) ([]map[string]any, error) {
+	if !cfg.Events.Enabled {
+		return nil, nil
+	}
+	dir := filepath.Join(cfg.BasePath, events.EventsDir)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	type key struct{ y, m int }
+	expired := map[key]bool{}
+	now := time.Now().UTC()
+	for _, ent := range entries {
+		if ent.IsDir() {
+			continue
+		}
+		y, m, _, _, ok := events.ParseDailyName(ent.Name())
+		if !ok {
+			continue
+		}
+		if !events.IsLiveMonth(y, m, now) {
+			expired[key{y, m}] = true
+		}
+	}
+	var out []map[string]any
+	for k := range expired {
+		out = append(out, map[string]any{
+			"kind":  "event_window",
+			"month": fmt.Sprintf("%04d-%02d", k.y, k.m),
+			"hint":  "run `sbdb doctor fix` to archive expired month(s)",
+		})
+	}
+	return out, nil
 }
 
 func checkDrift(s *schemapkg.Schema, doc *document.Document) []map[string]any {
@@ -249,10 +305,51 @@ func runDoctorFix(cmd *cobra.Command, _ []string) error {
 		fixed++
 	}
 
+	// Spec §7.7: doctor fix archives any expired months.
+	archived, err := archiveExpiredMonths(cmd.Context(), cfg)
+	if err != nil {
+		return fmt.Errorf("archiving expired months: %w", err)
+	}
+
 	return output.PrintData(format, map[string]any{
-		"action": "fix",
-		"fixed":  fixed,
+		"action":   "fix",
+		"fixed":    fixed,
+		"archived": archived,
 	})
+}
+
+// archiveExpiredMonths runs the events Archiver against the configured
+// target (currently git only; s3 is wired in archive_s3.go follow-up).
+func archiveExpiredMonths(ctx context.Context, cfg *config.Config) ([]string, error) {
+	if !cfg.Events.Enabled {
+		return nil, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	target := events.NewGitTarget(cfg.BasePath)
+	arc := events.NewArchiver(cfg.BasePath, target)
+	if cfg.Events.Archive.GzipLevel > 0 {
+		arc.GzipLevel = cfg.Events.Archive.GzipLevel
+	}
+	if cfg.Events.Archive.SettleDays > 0 {
+		arc.SettleDays = cfg.Events.Archive.SettleDays
+	}
+	if cfg.Events.Archive.MaxArchiveBytes > 0 {
+		arc.MaxBytes = cfg.Events.Archive.MaxArchiveBytes
+	}
+
+	sealed, err := arc.ArchiveExpired(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]string, 0, len(sealed))
+	for _, p := range sealed {
+		out = append(out, p.Month)
+	}
+	return out, nil
 }
 
 func runDoctorSign(cmd *cobra.Command, _ []string) error {
@@ -334,6 +431,11 @@ func runDoctorSign(cmd *cobra.Command, _ []string) error {
 
 	if err := manifest.Save(recordsDir); err != nil {
 		return err
+	}
+
+	// Spec §4.5: emit integrity.signed when one or more entries are re-signed.
+	if signed > 0 {
+		emitIntegrityEvent(cfg, "signed", recordsDir, signed)
 	}
 
 	return output.PrintData(format, map[string]any{

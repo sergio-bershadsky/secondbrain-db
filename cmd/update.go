@@ -128,6 +128,10 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	// Spec §4.1: emit <bucket>.updated on successful write.
+	emitDocEvent(cfg, eventBucket(s), "updated", doc.ID(),
+		shaFile(doc.FilePath()))
+
 	result := doc.AllData()
 	result["file"] = doc.RelativeFilePath()
 	return output.PrintData(format, result)
