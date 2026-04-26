@@ -10,6 +10,10 @@ permissions:
   contents: read
   pull-requests: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     name: Lint
@@ -23,6 +27,65 @@ jobs:
       - uses: golangci/golangci-lint-action@v7
         with:
           version: latest
+
+  format:
+    name: Format / vet / mod-tidy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache: true
+      - name: Install goimports
+        run: go install golang.org/x/tools/cmd/goimports@latest
+      - name: gofmt -l (no diff allowed)
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "::error::gofmt found unformatted files:"
+            echo "$out"
+            exit 1
+          fi
+      - name: goimports -l (no diff allowed)
+        run: |
+          out=$(goimports -l .)
+          if [ -n "$out" ]; then
+            echo "::error::goimports found files with import drift:"
+            echo "$out"
+            exit 1
+          fi
+      - name: go vet
+        env:
+          CGO_ENABLED: "1"
+        run: go vet ./...
+      - name: go mod tidy is clean
+        run: |
+          go mod tidy
+          if ! git diff --quiet go.mod go.sum; then
+            echo "::error::go mod tidy produced diff - commit it"
+            git --no-pager diff go.mod go.sum
+            exit 1
+          fi
+
+  vulncheck:
+    name: govulncheck (advisory)
+    runs-on: ubuntu-latest
+    # Advisory only: stdlib CVEs will surface here; bump Go to clear them.
+    # Keeps the signal visible without blocking PRs on environment-level fixes.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache: true
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: Scan for known vulnerabilities
+        env:
+          CGO_ENABLED: "1"
+        run: govulncheck ./...
 
   test:
     name: Test (${{ matrix.os }} / Go ${{ matrix.go }})
@@ -43,6 +106,21 @@ jobs:
           CGO_ENABLED: "1"
         run: go test ./... -race -count=1
 
+  stress-concurrency:
+    name: Stress events concurrency (-count=20 -race)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache: true
+      - name: Stress events package
+        env:
+          CGO_ENABLED: "1"
+        run: go test ./internal/events/... -race -count=20 -timeout=15m
+
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
@@ -62,10 +140,31 @@ jobs:
         uses: vladopajic/go-test-coverage@v2
         with:
           config: ./.testcoverage.yml
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.out
+
+  e2e:
+    name: E2E (built binary)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache: true
+      - name: Run e2e suite
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=e2e -race -count=1 -timeout=5m ./e2e/...
 
   build:
     name: Build
-    needs: [lint, test, coverage]
+    needs: [lint, format, test, coverage, stress-concurrency, e2e]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
