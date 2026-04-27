@@ -435,7 +435,7 @@ func runDoctorSign(cmd *cobra.Command, _ []string) error {
 
 	// Spec §4.5: emit integrity.signed when one or more entries are re-signed.
 	if signed > 0 {
-		emitIntegrityEvent(cfg, "signed", recordsDir, signed)
+		emitIntegrityEvent(cfg, "signed", recordsDir)
 	}
 
 	return output.PrintData(format, map[string]any{

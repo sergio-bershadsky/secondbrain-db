@@ -502,22 +502,24 @@ The **2-month live window** is the rule: the current month and the immediately p
 {"ts":"2026-04-26T14:32:01.123Z","type":"note.created","id":"notes/2026/04/foo.md","sha":"def012","actor":"cli"}
 ```
 
-Required fields: `ts` (RFC 3339 UTC), `type` (e.g. `note.created`, `x.recipe.cooked`), `id`. Optional: `sha` (git blob hash of the file's post-event content — same as `git hash-object`, so workers can `git cat-file blob <sha>` directly), `prev` (git blob hash before the event), `op` (groups events from one logical operation), `phase`, `actor` (`cli` | `hook` | `worker` | `agent`), `data` (object). Hard cap: 4 KiB per line.
+Required fields: `ts` (RFC 3339 UTC), `type`, `id`. Optional: `sha` (git blob hash of the file's post-event content — same as `git hash-object`, so workers can `git cat-file blob <sha>` directly), `prev` (git blob hash before the event), `op` (groups events from one logical operation), `phase`, `actor` (`cli` | `hook` | `worker` | `agent`). Hard cap: 4 KiB per line.
+
+> **Events are pure pointers.** There is no `data` payload. An event names a place (`id`) and a version (`sha`); the value lives in git. Workers wanting to know *what changed* read the file at `sha` and diff against `prev` — `git cat-file blob <sha>` retrieves the exact bytes the event describes.
 
 ### Built-in event catalog
 
-`sbdb event types` lists every registered type. Built-in buckets:
+The catalog is closed — sbdb does not support author-defined event types. `sbdb event types` lists every emitted type:
 
-- **Document lifecycle**: `note.{created,updated,deleted}`, `task.{created,updated,deleted,status_changed,completed}`, `adr.{created,proposed,accepted,superseded,rejected}`, `discussion.{created,updated,action_added,action_resolved}`
+- **Document lifecycle**: `{note,task,adr,discussion}.{created,updated,deleted}`
 - **Knowledge graph**: `graph.{node_added,node_removed,edge_added,edge_removed,reindexed}`
 - **Index / embeddings**: `kb.{indexed,chunk_added,chunk_removed,embedding_updated,model_changed}`
 - **Records**: `records.{upserted,removed,partition_rotated}`
 - **Integrity**: `integrity.{signed,recomputed,drift_detected,tamper_detected}`
 - **Review / freshness**: `review.stamped`, `freshness.stale_flagged`
-- **Meta**: `meta.{archived,event_type_registered,event_type_evolved,event_type_deprecated,config_changed}`
+- **Meta**: `meta.{archived,config_changed}`
 - **Search** (opt-in, off by default): `search.queried`
 
-40+ types total. Renames are not a thing; a file move emits `<bucket>.deleted` + `<bucket>.created` with matching `sha` so consumers can reconstruct the rename if they care.
+Renames are not a thing; a file move emits `<bucket>.deleted` + `<bucket>.created` with matching `sha` so consumers can reconstruct the rename if they care.
 
 ### CLI
 
@@ -528,57 +530,10 @@ sbdb event append \                # programmatic append (for hooks, scripts)
   --type note.created \
   --id notes/foo.md \
   --sha abc123
-sbdb event rebuild-registry        # regenerate registry.yaml from event log
 sbdb event repair --file 2026-04-26.jsonl --truncate-partial
                                    # explicit recovery from a crashed write
                                    # (sbdb never auto-truncates)
 ```
-
-### Author extensions: `x.*` namespace
-
-Built-in types use bare names (`note.*`, `task.*`). Author entities use `x.*` so they can never collide with current or future built-ins. Declare them in your schema:
-
-```yaml
-# schemas/recipes.yaml
-entity: x.recipe
-bucket: x.recipe
-event_types:
-  created:
-    data:
-      fields:
-        - { name: title,  type: string, required: true }
-        - { name: source, type: string }
-  updated:
-    data:
-      fields:
-        - { name: changed_keys, type: list, required: true }
-  deleted:
-    data: {}
-  cooked:
-    data:
-      fields:
-        - { name: date,   type: date, required: true }
-        - { name: rating, type: int }
-```
-
-When `sbdb doctor check` first sees the new schema, it emits `meta.event_type_registered` for every declared type and adds them to the registry projection at `internal/events/registry.yaml`. Authors who need to extend a built-in type's `data` payload nest their fields under `data.x.*` (so built-ins can never clash with author additions).
-
-### Schema evolution rules
-
-Type schemas evolve under strict additive rules. The full matrix lives in spec §6.3; the gist:
-
-| Change | Allowed |
-|---|---|
-| Add an optional field | yes |
-| Add an enum value | yes |
-| Loosen a constraint (e.g. `max_length` grows) | yes |
-| Mark deprecated, edit description | yes |
-| Add a required field | no — register a new type |
-| Rename / remove a field | no |
-| Change a type, flip required ↔ optional | no |
-| Tighten a constraint | no |
-
-Doctor enforces this on every check. Forbidden changes are rejected at registry-update time; allowed changes emit `meta.event_type_evolved` and bump the type's schema version.
 
 ### Concurrency & integrity
 

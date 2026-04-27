@@ -3,6 +3,7 @@ package events
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"sync"
 	"testing"
@@ -53,7 +54,7 @@ func TestArchiver_S3Target_HappyPath(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		require.NoError(t, em.Emit(context.Background(), &Event{
 			TS: feb.Add(time.Duration(i) * time.Minute), Type: "note.created",
-			ID: "notes/old.md", Data: map[string]interface{}{"i": i},
+			ID: "notes/old.md", SHA: fmt.Sprintf("sha%d", i),
 		}))
 	}
 	require.NoError(t, app.Close())

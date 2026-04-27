@@ -2,6 +2,7 @@ package events
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -25,7 +26,7 @@ func TestArchiver_GitTarget_HappyPath(t *testing.T) {
 			TS:   feb.Add(time.Duration(i) * time.Minute),
 			Type: "note.created",
 			ID:   "notes/old.md",
-			Data: map[string]interface{}{"i": i},
+			SHA:  fmt.Sprintf("sha%d", i),
 		}))
 	}
 	require.NoError(t, app.Close())

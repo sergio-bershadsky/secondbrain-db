@@ -65,47 +65,18 @@ func (v *Virtual) IsScalarReturn() bool {
 
 // Schema is the top-level definition of a knowledge base entity.
 type Schema struct {
-	Version    int                   `yaml:"version"`
-	Entity     string                `yaml:"entity"`
-	DocsDir    string                `yaml:"docs_dir"`
-	Filename   string                `yaml:"filename"`
-	RecordsDir string                `yaml:"records_dir"`
-	Partition  string                `yaml:"partition"` // "none" or "monthly"
-	IDField    string                `yaml:"id_field"`
-	DateField  string                `yaml:"date_field"` // field used for monthly partition
-	Integrity  string                `yaml:"integrity"`  // "strict", "warn", "off"
-	Fields     FieldMap              `yaml:"fields"`
-	Virtuals   map[string]*Virtual   `yaml:"virtuals,omitempty"`
-	Bucket     string                `yaml:"bucket,omitempty"`      // event bucket; defaults to entity
-	EventTypes map[string]*EventType `yaml:"event_types,omitempty"` // events emitted by this entity
-}
-
-// EventType describes one verb under this entity's event bucket. The verb
-// name is the map key in Schema.EventTypes; concatenated as <bucket>.<verb>
-// for the full type name.
-type EventType struct {
-	Description string                   `yaml:"description,omitempty"`
-	Data        *EventDataSchema         `yaml:"data,omitempty"`
-	Deprecated  bool                     `yaml:"deprecated,omitempty"`
-	Examples    []map[string]interface{} `yaml:"examples,omitempty"`
-}
-
-// EventDataSchema describes the shape of an event's `data` payload.
-type EventDataSchema struct {
-	Fields []*EventDataField `yaml:"fields,omitempty"`
-}
-
-// EventDataField is one field under `data`. Type uses the same FieldType
-// vocabulary as schema scalar fields (string, int, float, bool, date, enum).
-type EventDataField struct {
-	Name        string   `yaml:"name"`
-	Type        string   `yaml:"type"`
-	Required    bool     `yaml:"required,omitempty"`
-	EnumValues  []string `yaml:"enum_values,omitempty"`
-	MaxLength   int      `yaml:"max_length,omitempty"`
-	Pattern     string   `yaml:"pattern,omitempty"`
-	Description string   `yaml:"description,omitempty"`
-	Deprecated  bool     `yaml:"deprecated,omitempty"`
+	Version    int                 `yaml:"version"`
+	Entity     string              `yaml:"entity"`
+	DocsDir    string              `yaml:"docs_dir"`
+	Filename   string              `yaml:"filename"`
+	RecordsDir string              `yaml:"records_dir"`
+	Partition  string              `yaml:"partition"` // "none" or "monthly"
+	IDField    string              `yaml:"id_field"`
+	DateField  string              `yaml:"date_field"` // field used for monthly partition
+	Integrity  string              `yaml:"integrity"`  // "strict", "warn", "off"
+	Fields     FieldMap            `yaml:"fields"`
+	Virtuals   map[string]*Virtual `yaml:"virtuals,omitempty"`
+	Bucket     string              `yaml:"bucket,omitempty"` // event bucket; defaults to entity
 }
 
 // Validate checks the schema for internal consistency.

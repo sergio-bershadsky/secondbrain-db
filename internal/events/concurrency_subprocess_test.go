@@ -45,7 +45,6 @@ func runHelper() {
 			TS:   time.Now().UTC(),
 			Type: "note.created",
 			ID:   fmt.Sprintf("notes/sp%d/n%d.md", writerID, i),
-			Data: map[string]interface{}{"writer": writerID, "seq": i},
 		}
 		if err := em.Emit(context.Background(), ev); err != nil {
 			fmt.Fprintf(os.Stderr, "writer %d emit failed at seq %d: %v\n", writerID, i, err)
@@ -103,10 +102,13 @@ func TestSubprocess_ConcurrentAppend(t *testing.T) {
 	got := readAllLineMapsForSubproc(t, tmp)
 	require.Len(t, got, subprocs*perProc, "total line count")
 
+	// Parse writer/seq from id `notes/sp<W>/n<S>.md` — the data field
+	// that previously carried this metadata was removed (see #8).
 	seen := make(map[int][]int, subprocs)
 	for _, m := range got {
-		w := int(m["data"].(map[string]interface{})["writer"].(float64))
-		s := int(m["data"].(map[string]interface{})["seq"].(float64))
+		var w, s int
+		_, err := fmt.Sscanf(m["id"].(string), "notes/sp%d/n%d.md", &w, &s)
+		require.NoError(t, err, "id parse: %v", m["id"])
 		seen[w] = append(seen[w], s)
 	}
 	require.Len(t, seen, subprocs, "every subprocess landed events")

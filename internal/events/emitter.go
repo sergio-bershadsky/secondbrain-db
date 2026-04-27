@@ -3,21 +3,18 @@ package events
 import (
 	"context"
 	"fmt"
-	"sync"
 	"sync/atomic"
 )
 
 // Emitter is the high-level write API. It holds a Registry snapshot for
 // fast type-membership checks and delegates the actual write to an Appender.
 //
-// Emitter is safe for concurrent use across goroutines. Per spec §11, the
-// Appender path is lock-free at the kernel level; the only mutex here
-// guards the in-memory registry pointer for hot-swap on evolution events.
+// Emitter is safe for concurrent use across goroutines. The catalog is
+// closed (see builtin.go), so the registry never changes after construction —
+// the atomic.Pointer is retained only for cheap concurrent reads.
 type Emitter struct {
 	appender *Appender
-
-	regMu    sync.RWMutex
-	registry atomic.Pointer[Registry] // hot-swappable snapshot
+	registry atomic.Pointer[Registry]
 }
 
 // NewEmitter wraps an Appender with registry-aware Emit().
@@ -25,14 +22,6 @@ func NewEmitter(appender *Appender, registry *Registry) *Emitter {
 	em := &Emitter{appender: appender}
 	em.registry.Store(registry)
 	return em
-}
-
-// SwapRegistry installs a new registry snapshot. Used after a meta.event_type_*
-// event lands and we want subsequent appends to recognize the new type.
-func (em *Emitter) SwapRegistry(r *Registry) {
-	em.regMu.Lock()
-	defer em.regMu.Unlock()
-	em.registry.Store(r)
 }
 
 // Registry returns the current registry snapshot.

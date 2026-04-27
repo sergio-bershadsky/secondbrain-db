@@ -42,7 +42,6 @@ func TestConcurrent_GoroutineAppend(t *testing.T) {
 					TS:   time.Now().UTC(),
 					Type: "note.created",
 					ID:   fmt.Sprintf("notes/w%d/n%d.md", writerID, i),
-					Data: map[string]interface{}{"writer": writerID, "seq": i},
 				}
 				require.NoError(t, em.Emit(context.Background(), ev))
 			}
@@ -55,11 +54,12 @@ func TestConcurrent_GoroutineAppend(t *testing.T) {
 	got := readAllLineMaps(t, tmp)
 	require.Len(t, got, writers*perWriter, "total line count")
 
-	// Per-writer monotonic seq check.
+	// Per-writer monotonic seq check — parse the id `notes/w<W>/n<S>.md`.
 	seen := make(map[int][]int, writers)
 	for _, m := range got {
-		w := int(m["data"].(map[string]interface{})["writer"].(float64))
-		s := int(m["data"].(map[string]interface{})["seq"].(float64))
+		var w, s int
+		_, err := fmt.Sscanf(m["id"].(string), "notes/w%d/n%d.md", &w, &s)
+		require.NoError(t, err, "id parse: %v", m["id"])
 		seen[w] = append(seen[w], s)
 	}
 	require.Len(t, seen, writers)
@@ -140,7 +140,6 @@ func TestConcurrent_ReaderWriter(t *testing.T) {
 					TS:   time.Now().UTC(),
 					Type: "note.created",
 					ID:   fmt.Sprintf("notes/rw%d/n%d.md", writerID, i),
-					Data: map[string]interface{}{"writer": writerID, "seq": i},
 				}))
 			}
 		}(w)
@@ -163,25 +162,24 @@ func TestConcurrent_SizeBoundary(t *testing.T) {
 	t.Cleanup(func() { _ = app.Close() })
 	em := NewEmitter(app, r)
 
-	// Just-fits event (~3.9 KB body in `data`).
-	smallish := strings.Repeat("a", 3500)
+	// Just-fits event — `data` is gone, so the only field that can grow
+	// to test the cap is `id`. Use a deeply nested path.
+	smallishID := "notes/" + strings.Repeat("a", 3500) + ".md"
 	require.NoError(t, em.Emit(context.Background(), &Event{
 		TS:   time.Now().UTC(),
 		Type: "note.created",
-		ID:   "notes/big.md",
-		Data: map[string]interface{}{"x": smallish},
+		ID:   smallishID,
 	}))
 
 	// Over-cap event must be rejected before any filesystem activity.
-	huge := strings.Repeat("a", 5000)
+	hugeID := "notes/" + strings.Repeat("a", 5000) + ".md"
 	preFiles := readDir(t, filepath.Join(tmp, EventsDir))
 	preStat := statSizes(t, preFiles)
 
 	err := em.Emit(context.Background(), &Event{
 		TS:   time.Now().UTC(),
 		Type: "note.created",
-		ID:   "notes/huge.md",
-		Data: map[string]interface{}{"x": huge},
+		ID:   hugeID,
 	})
 	require.ErrorIs(t, err, ErrLineTooLarge)
 
@@ -205,11 +203,12 @@ func TestConcurrent_NoBufferedWriter(t *testing.T) {
 
 	sentinel := "SENTINEL_" + fmt.Sprintf("%016x", time.Now().UnixNano())
 
+	// Embed the sentinel in `id` (the only large free-form field after the
+	// data removal). Detection is identical: the line must contain it.
 	require.NoError(t, em.Emit(context.Background(), &Event{
 		TS:   time.Now().UTC(),
 		Type: "note.created",
-		ID:   "notes/sentinel.md",
-		Data: map[string]interface{}{"marker": sentinel},
+		ID:   "notes/" + sentinel + ".md",
 	}))
 
 	// Read via a second FD without closing the writer.

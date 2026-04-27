@@ -38,16 +38,21 @@ func (a Actor) Valid() bool {
 
 // Event is the in-memory representation of one event line. JSON output uses
 // fixed key order (see MarshalJSON) for diff readability.
+//
+// Events are pure pointers: ts says when, type says what, id says where,
+// sha says which version (a git blob hash — `git cat-file blob <sha>`
+// retrieves the exact bytes the event describes). There is no `data`
+// payload — anything a worker needs about the change comes from reading
+// the file at sha, or diffing against prev.
 type Event struct {
-	TS    time.Time              `json:"-"`
-	Type  string                 `json:"-"`
-	ID    string                 `json:"-"`
-	SHA   string                 `json:"-"` // optional, hex sha256
-	Prev  string                 `json:"-"` // optional, hex sha256
-	Op    string                 `json:"-"` // optional, ULID
-	Phase string                 `json:"-"` // optional
-	Actor Actor                  `json:"-"` // optional
-	Data  map[string]interface{} `json:"-"` // optional
+	TS    time.Time `json:"-"`
+	Type  string    `json:"-"`
+	ID    string    `json:"-"`
+	SHA   string    `json:"-"` // optional, git blob hash
+	Prev  string    `json:"-"` // optional, git blob hash
+	Op    string    `json:"-"` // optional, ULID
+	Phase string    `json:"-"` // optional
+	Actor Actor     `json:"-"` // optional
 }
 
 // MaxLineBytes is the hard cap on a serialized event line including trailing \n.
@@ -154,7 +159,7 @@ func (e *Event) Validate() error {
 // MarshalLine serializes the event to a single JSON line with trailing \n.
 // Returns ErrLineTooLarge if the result exceeds MaxLineBytes.
 //
-// Key order is fixed: ts, type, id, sha, prev, op, phase, actor, data.
+// Key order is fixed: ts, type, id, sha, prev, op, phase, actor.
 // Empty/zero optional fields are omitted (never null).
 func (e *Event) MarshalLine() ([]byte, error) {
 	if err := e.Validate(); err != nil {
@@ -217,11 +222,6 @@ func (e *Event) MarshalLine() ([]byte, error) {
 			return nil, err
 		}
 	}
-	if len(e.Data) > 0 {
-		if err := write("data", e.Data); err != nil {
-			return nil, err
-		}
-	}
 	sb.WriteByte('}')
 	sb.WriteByte('\n')
 
@@ -238,16 +238,17 @@ func ParseLine(line []byte) (*Event, error) {
 	for len(line) > 0 && (line[len(line)-1] == '\n' || line[len(line)-1] == '\r') {
 		line = line[:len(line)-1]
 	}
+	// Note: any "data" key on the input is ignored — pre-1.2 logs may
+	// still carry it, but emit-side never produces it.
 	var raw struct {
-		TS    string                 `json:"ts"`
-		Type  string                 `json:"type"`
-		ID    string                 `json:"id"`
-		SHA   string                 `json:"sha,omitempty"`
-		Prev  string                 `json:"prev,omitempty"`
-		Op    string                 `json:"op,omitempty"`
-		Phase string                 `json:"phase,omitempty"`
-		Actor string                 `json:"actor,omitempty"`
-		Data  map[string]interface{} `json:"data,omitempty"`
+		TS    string `json:"ts"`
+		Type  string `json:"type"`
+		ID    string `json:"id"`
+		SHA   string `json:"sha,omitempty"`
+		Prev  string `json:"prev,omitempty"`
+		Op    string `json:"op,omitempty"`
+		Phase string `json:"phase,omitempty"`
+		Actor string `json:"actor,omitempty"`
 	}
 	if err := json.Unmarshal(line, &raw); err != nil {
 		return nil, err
@@ -269,7 +270,6 @@ func ParseLine(line []byte) (*Event, error) {
 		Op:    raw.Op,
 		Phase: raw.Phase,
 		Actor: Actor(raw.Actor),
-		Data:  raw.Data,
 	}
 	return e, nil
 }

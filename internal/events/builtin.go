@@ -1,28 +1,31 @@
 package events
 
-// BuiltinTypes is the canonical list of every event type sbdb itself emits.
-// Author types live under x.* and are added to the registry dynamically.
+// BuiltinTypes is the canonical, closed catalog of every event type sbdb emits.
+//
+// The catalog is intentionally closed — sbdb does not support author-defined
+// event types. Events are pure pointers (`{ts, type, id, sha}`) into git's
+// content-addressed store; there is no per-type `data` payload that would
+// require schema declaration. New verbs ship by editing this slice and adding
+// the corresponding emit site, not by author registration.
 //
 // Order is preserved for stable output in `sbdb event types`.
 var BuiltinTypes = []string{
-	// Document lifecycle
+	// Document lifecycle. The canonical CRUD triplet, emitted from
+	// cmd/{create,update,delete}.go via emitDocEvent. Workers diff
+	// content at sha against prev to derive any per-bucket semantics
+	// they care about (status changes, action items, ADR transitions, etc.).
 	"note.created",
 	"note.updated",
 	"note.deleted",
 	"task.created",
 	"task.updated",
 	"task.deleted",
-	"task.status_changed",
-	"task.completed",
 	"adr.created",
-	"adr.proposed",
-	"adr.accepted",
-	"adr.superseded",
-	"adr.rejected",
+	"adr.updated",
+	"adr.deleted",
 	"discussion.created",
 	"discussion.updated",
-	"discussion.action_added",
-	"discussion.action_resolved",
+	"discussion.deleted",
 
 	// Knowledge graph
 	"graph.node_added",
@@ -55,18 +58,15 @@ var BuiltinTypes = []string{
 
 	// Meta
 	"meta.archived",
-	"meta.event_type_registered",
-	"meta.event_type_evolved",
-	"meta.event_type_deprecated",
 	"meta.config_changed",
 
 	// Search (opt-in)
 	"search.queried",
 }
 
-// ReservedBuckets lists every bucket name owned by built-ins. Author schemas
-// MUST NOT claim these. The `sbdb` prefix is also reserved by §3.3 but is
-// matched as a prefix, not a literal bucket.
+// ReservedBuckets lists every bucket name owned by built-ins.
+// The `sbdb` prefix is also reserved by §3.3 but is matched as a prefix,
+// not a literal bucket.
 var ReservedBuckets = []string{
 	"note", "task", "adr", "discussion",
 	"graph", "kb", "records",
@@ -74,9 +74,8 @@ var ReservedBuckets = []string{
 	"meta", "search",
 }
 
-// IsReservedBucket reports whether the given bucket may be claimed by an
-// author schema. Returns true if the bucket is built-in or starts with the
-// reserved `sbdb.` prefix.
+// IsReservedBucket reports whether the given bucket is built-in. Kept for
+// validation of incoming type names from `sbdb event append`.
 func IsReservedBucket(bucket string) bool {
 	for _, r := range ReservedBuckets {
 		if bucket == r {
@@ -93,6 +92,8 @@ func IsReservedBucket(bucket string) bool {
 }
 
 // IsBuiltinType reports whether the given type is in the built-in catalog.
+// Since the catalog is closed (no author-defined types), this is equivalent
+// to "is the type valid".
 func IsBuiltinType(typeName string) bool {
 	for _, t := range BuiltinTypes {
 		if t == typeName {

@@ -188,15 +188,20 @@ func TestEventTypes_ListsBuiltins(t *testing.T) {
 	p := newProject(t, true)
 	out := p.runOK(t, "event", "types")
 
+	// Catalog is closed and pruned to actually-emitted verbs (see #8).
+	// Aspirational verbs (task.status_changed, adr.proposed, discussion.action_added,
+	// meta.event_type_*) and their data payloads were removed in favor of pure-pointer
+	// CRUD events; workers diff content at sha to derive any per-bucket semantics.
 	for _, expected := range []string{
 		"note.created",
 		"note.updated",
 		"note.deleted",
 		"task.created",
-		"task.status_changed",
-		"adr.proposed",
-		"adr.accepted",
-		"discussion.action_added",
+		"task.updated",
+		"adr.created",
+		"adr.updated",
+		"discussion.created",
+		"discussion.updated",
 		"graph.node_added",
 		"graph.edge_added",
 		"kb.indexed",
@@ -204,7 +209,7 @@ func TestEventTypes_ListsBuiltins(t *testing.T) {
 		"records.upserted",
 		"integrity.signed",
 		"meta.archived",
-		"meta.event_type_registered",
+		"meta.config_changed",
 	} {
 		require.Contains(t, out, expected, "missing built-in type %q", expected)
 	}

@@ -42,8 +42,9 @@ func emitDocEvent(cfg *config.Config, bucket, verb, id, contentSHA string) {
 	_ = em.Emit(context.Background(), ev) // intentional: best-effort
 }
 
-// emitIntegrityEvent records integrity.* events.
-func emitIntegrityEvent(cfg *config.Config, verb, id string, count int) {
+// emitIntegrityEvent records integrity.* events. The event is a pure pointer:
+// workers wanting integrity stats read the manifest at the same git revision.
+func emitIntegrityEvent(cfg *config.Config, verb, id string) {
 	if !cfg.Events.Enabled {
 		return
 	}
@@ -56,7 +57,6 @@ func emitIntegrityEvent(cfg *config.Config, verb, id string, count int) {
 		Type:  "integrity." + verb,
 		ID:    id,
 		Actor: events.ActorCLI,
-		Data:  map[string]interface{}{"count": count},
 	}
 	_ = em.Emit(context.Background(), ev)
 }

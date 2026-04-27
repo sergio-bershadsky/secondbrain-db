@@ -7,7 +7,7 @@
 | Date | 2026-04-24 |
 | Scope | Normative spec for sbdb's event log: wire format, type registry, extension protocol, archival, and concurrency guarantees |
 
-> **Lead invariant.** Events are immutable, append-only facts. The only mutable artifact in the system is markdown file content, governed by git. Every other byte sbdb writes is write-once during routine operation. Type schemas evolve under strict additive rules; non-additive change requires a new type. The single exception is `sbdb event repair --truncate-partial`, an explicit user-initiated recovery from a crashed write (§7.10) — sbdb never auto-truncates.
+> **Lead invariant.** Events are pure pointers, not records. An event names a place (`id`) and a version (`sha`, a git blob hash); the value lives in git. Workers wanting to know what changed read the file at `sha` and diff against `prev`. The catalog is closed — sbdb does not support author-defined event types, and there is no `data` payload. Events are immutable, append-only facts. The only mutable artifact in the system is markdown file content, governed by git. Every other byte sbdb writes is write-once during routine operation. The single exception is `sbdb event repair --truncate-partial`, an explicit user-initiated recovery from a crashed write (§7.10) — sbdb never auto-truncates.
 
 ---
 
@@ -67,35 +67,19 @@ Every event is exactly one JSON object on one line, with a trailing `\n`.
 
 | Field | Type | Notes |
 |---|---|---|
-| `sha` | string | Git blob hash of the affected file's content **after** the event — the same hex string `git hash-object` produces (`sha1("blob <len>\0" + bytes)`). This is git's native object identifier, so workers can resolve content directly via `git cat-file blob <sha>` and locate introducing commits via `git log --find-object=<sha>`. Required for document mutation events; omitted for events with no file (e.g. registry events). |
+| `sha` | string | Git blob hash of the affected file's content **after** the event — the same hex string `git hash-object` produces (`sha1("blob <len>\0" + bytes)`). This is git's native object identifier, so workers can resolve content directly via `git cat-file blob <sha>` and locate introducing commits via `git log --find-object=<sha>`. Required for document mutation events; omitted for events with no file. |
 | `prev` | string | Git blob hash before the event. Used on `*.updated` events to anchor diffs. |
 | `op` | string | ULID grouping events emitted from one logical operation. |
 | `phase` | string | Sub-step within an `op` for ordered cascades. Free-form short identifier (e.g. `"graph"`, `"index"`). |
 | `actor` | enum | `cli` \| `hook` \| `worker` \| `agent`. Closed enum in v1. |
-| `data` | object | Type-specific payload. Bounded so the full line stays ≤ 4 KiB (§7). |
+
+> **No `data` payload.** Spec v1.2 removed the `data` field entirely. Events are pure pointers — `{ts, type, id, sha, prev?}` is sufficient. Workers wanting to know *what changed* read the file at `sha` and diff against `prev`. This collapses the entire wire format around a single mental model: an event names a place and a version, never inlines the value.
 
 ### 2.3 Forbidden patterns
 
 - `null` values for any field (omit instead).
-- Nested arrays-of-objects deeper than 1 level inside `data`.
-- Base64 blobs of any kind. Reference by `sha` instead.
 - Any field whose value would push the line past 4 KiB.
-
-### 2.4 Field key namespacing inside `data`
-
-Within `data`, top-level keys belong to the type's owner.
-
-- For built-in types (no `x.` prefix on the type name), top-level `data` keys are owned by sbdb maintainers.
-- For author-extended types (`x.*` prefix), top-level `data` keys are owned by the author.
-- **Any author who needs to add fields to a type they do not own** (i.e. extending a built-in) MUST place those fields inside a nested object at `data.x`. Concretely, the `data` object MAY contain a key literally named `"x"` whose value is an object holding all author-added fields. Author-added fields are NOT JSON keys with literal dots like `"x.author_team"`; they are normal keys inside the `x` sub-object. The `x` sub-object inside `data` is the only path through which non-owners may extend a type.
-
-Example — a built-in `note.updated` event extended with an author-added field:
-
-```json
-{"ts":"2026-04-24T14:32:01.123Z","type":"note.updated","id":"notes/foo.md","sha":"def012","data":{"changed_keys":["title"],"x":{"author_team":"docs"}}}
-```
-
-`changed_keys` is owned by sbdb. `x.author_team` is owned by whatever schema declared it.
+- Author extension via a `data` payload — there is no `data` field. Workers needing structured side-channel state should keep that state in their own store, keyed by `(type, id, sha)`.
 
 ---
 

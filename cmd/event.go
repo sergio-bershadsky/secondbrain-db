@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
@@ -40,12 +39,6 @@ var eventShowCmd = &cobra.Command{
 	Args:  cobra.MaximumNArgs(1),
 }
 
-var eventRebuildRegistryCmd = &cobra.Command{
-	Use:   "rebuild-registry",
-	Short: "Rebuild internal/events/registry.yaml from the event log",
-	RunE:  runEventRebuildRegistry,
-}
-
 var eventRepairCmd = &cobra.Command{
 	Use:   "repair",
 	Short: "Repair a corrupted event file (requires --truncate-partial)",
@@ -63,7 +56,6 @@ var (
 	flagEventOp    string
 	flagEventPhase string
 	flagEventActor string
-	flagEventData  string
 	flagEventFile  string
 
 	flagRepairTruncatePartial bool
@@ -77,7 +69,6 @@ func init() {
 	eventAppendCmd.Flags().StringVar(&flagEventOp, "op", "", "operation group ulid")
 	eventAppendCmd.Flags().StringVar(&flagEventPhase, "phase", "", "sub-step within an op")
 	eventAppendCmd.Flags().StringVar(&flagEventActor, "actor", "cli", "actor: cli|hook|worker|agent")
-	eventAppendCmd.Flags().StringVar(&flagEventData, "data", "", "JSON payload (object) for data field")
 	_ = eventAppendCmd.MarkFlagRequired("type")
 	_ = eventAppendCmd.MarkFlagRequired("id")
 
@@ -87,7 +78,6 @@ func init() {
 	eventCmd.AddCommand(eventAppendCmd)
 	eventCmd.AddCommand(eventTypesCmd)
 	eventCmd.AddCommand(eventShowCmd)
-	eventCmd.AddCommand(eventRebuildRegistryCmd)
 	eventCmd.AddCommand(eventRepairCmd)
 	rootCmd.AddCommand(eventCmd)
 }
@@ -117,13 +107,6 @@ func runEventAppend(cmd *cobra.Command, _ []string) error {
 		Phase: flagEventPhase,
 		Actor: events.Actor(flagEventActor),
 	}
-	if flagEventData != "" {
-		var data map[string]interface{}
-		if err := json.Unmarshal([]byte(flagEventData), &data); err != nil {
-			return fmt.Errorf("invalid --data JSON: %w", err)
-		}
-		ev.Data = data
-	}
 
 	if err := em.Emit(context.Background(), ev); err != nil {
 		return err
@@ -151,9 +134,6 @@ func runEventTypes(cmd *cobra.Command, _ []string) error {
 		fmt.Fprintf(cmd.OutOrStdout(), "%s [owner=%s]\n", b, entry.Owner)
 		for _, v := range entry.Types {
 			fmt.Fprintf(cmd.OutOrStdout(), "  %s.%s\n", b, v)
-		}
-		for _, v := range entry.Deprecated {
-			fmt.Fprintf(cmd.OutOrStdout(), "  %s.%s (deprecated)\n", b, v)
 		}
 	}
 	return nil
@@ -189,23 +169,6 @@ func runEventShow(cmd *cobra.Command, args []string) error {
 		}
 		_, _ = cmd.OutOrStdout().Write(line)
 	}
-	return nil
-}
-
-func runEventRebuildRegistry(cmd *cobra.Command, _ []string) error {
-	cfg, err := resolveConfig()
-	if err != nil {
-		return err
-	}
-	registry, err := events.RebuildRegistry(cfg.BasePath)
-	if err != nil {
-		return err
-	}
-	path := cfg.BasePath + "/" + events.RegistryFileName
-	if err := registry.Save(path); err != nil {
-		return err
-	}
-	fmt.Fprintf(cmd.OutOrStdout(), "registry rebuilt: %s\n", path)
 	return nil
 }
 
