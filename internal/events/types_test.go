@@ -56,7 +56,7 @@ func TestValidate_RejectsBadType(t *testing.T) {
 		"NoteCreated":     false,
 		"note":            false, // need bucket.verb
 		"note..created":   false,
-		"x.recipe.cooked": false, // closed catalog: bucket.verb only
+		"x.recipe.cooked": false, // more than two segments — bucket.verb only
 	}
 	for typeName, want := range cases {
 		t.Run(typeName, func(t *testing.T) {

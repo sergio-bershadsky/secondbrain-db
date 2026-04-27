@@ -33,7 +33,7 @@ The root cause is that **markdown files are treated as dumb text when they're ac
 - **Queryable indexes** — filtering 1,000 records reads one YAML file, not 1,000 markdown files
 - **Relationship tracking** — when doc A links to doc B, that relationship is a first-class edge in a knowledge graph, not a string buried in prose
 - **Two-tier tracking** — structured entities get full ORM treatment; unstructured pages (templates, index pages, guides) still get integrity signing and graph inclusion
-- **Audit trail** — every mutation emits an immutable, append-only JSONL event in `.sbdb/events/`. Workers tail the repo to stream changes downstream (SNS / SQS / Kafka / webhooks) without re-parsing markdown
+- **Audit trail** — git is the audit trail. `sbdb events emit <commit-from> [<commit-to>]` projects git history into a JSONL stream on stdout, ready to pipe downstream (SNS / SQS / Kafka / webhooks). No event files are stored — the projection reads from `git log` on demand
 
 The tool is deliberately a **single static binary** (`sbdb`) that operates on **plain files on disk**. No database server. No lock-in. Your docs stay as markdown files that any tool can read. `sbdb` layers structure, integrity, and intelligence on top — and gets out of the way when you don't need it.
 
@@ -585,7 +585,7 @@ How the internal Go packages relate. Arrows mean "imports / depends on".
   └─────────────────┘                  └──────────────────┘
 ```
 
-Key boundaries: `cmd/` is the only thing that talks to user input or stdout. `internal/document` orchestrates a single document's lifecycle. `internal/events` is fully standalone — no imports from other internal packages — so it can be lifted out or reused. `internal/storage`, `internal/integrity`, and `internal/kg` are leaf storage services.
+Key boundaries: `cmd/` is the only thing that talks to user input or stdout. `internal/document` orchestrates a single document's lifecycle. `internal/events` holds the git-projection logic (no imports from other internal packages — it just shells out to `git log`). `internal/storage`, `internal/integrity`, and `internal/kg` are leaf storage services.
 
 ### Write path: `sbdb create`
 
@@ -618,28 +618,16 @@ What happens when you run `sbdb create -s notes --input -`:
    │ uals   │ │        │ │          │  │             │
    └────────┘ └────────┘ └──────────┘  └─────────────┘
                   │
-                  │ 3. emit event (if events.enabled)
-                  v
-       ┌──────────────────────────┐
-       │ events.Emitter.Emit()    │
-       │  • registry-validate     │
-       │  • marshal line ≤ 4 KiB  │
-       │  • O_APPEND single write │
-       └──────────┬───────────────┘
-                  v
-        .sbdb/events/2026-04-26.jsonl
-        {"ts":"...","type":"note.created","id":"...","sha":"..."}
-                  │
-                  │ 4. print result JSON to stdout
+                  │ 3. print result JSON to stdout
                   v
               ┌────────┐
               │ stdout │
               └────────┘
 ```
 
-A failure at any step before the event emit aborts cleanly with no partial state. The event emit itself is best-effort: if disk is full at that exact moment, the CRUD already succeeded and the next sbdb invocation will pick up an audit gap detectable via integrity.
+A failure at any step aborts cleanly with no partial state. No event is emitted on CRUD — events come from git history when you run `sbdb events emit` later, so the audit trail is whatever you've committed.
 
-### Doctor + archival flow
+### Doctor flow
 
 What `sbdb doctor check` and `sbdb doctor fix` do, in order:
 
@@ -655,105 +643,83 @@ What `sbdb doctor check` and `sbdb doctor fix` do, in order:
        └────────┬─────────┘                             v
                 │                              ┌────────────────┐
                 v                              │ for each doc:  │
-       ┌──────────────────┐                    │  doc.Save(rt)  │  fix drift by
-       │ for each doc:    │                    │   — re-runs    │  re-running
-       │  • check drift   │                    │     virtuals   │  the save
-       │  • check tamper  │                    │   — re-syncs   │  pipeline
+       ┌──────────────────┐                    │  doc.Save(rt)  │   fix drift by
+       │ for each doc:    │                    │   — re-runs    │   re-running
+       │  • check drift   │                    │     virtuals   │   the save
+       │  • check tamper  │                    │   — re-syncs   │   pipeline
        └────────┬─────────┘                    │     records    │
                 │                              │   — re-signs   │
                 v                              └──────┬─────────┘
-       ┌──────────────────┐                           │
-       │ check event-     │                           v
-       │ window invariant │                  ┌────────────────────┐
-       │ (any expired     │                  │ Archiver.Archive-  │
-       │ daily file?)     │                  │ Expired():         │
-       └────────┬─────────┘                  │  • group by month  │
-                │                            │  • gzip + verify   │
-                v                            │  • upload to       │
-        Exit:                                │    git or S3       │
-        0 = clean                            │  • write year      │
-        4 = drift OR window violation        │    manifest        │
-        6 = tamper                           │  • emit            │
-        7 = both                             │    meta.archived   │
-                                             │  • remove dailies  │
-                                             └────────────────────┘
+        Exit:                                         │
+        0 = clean                                     v
+        4 = drift                                Exit 0
+        6 = tamper
+        7 = both
 ```
 
-### Events: live → archive lifecycle
+### Events: projection from git
 
-How a single event line travels from emission to long-term storage:
+`sbdb events emit` is the only event surface. There is no on-disk events log, no archive, no append path — events are computed from `git log` on demand and streamed as JSONL on stdout:
 
 ```
-T0     CRUD or doctor run                            sbdb internal call
-       ────────────────────                          ──────────────────
-                │
-                │ events.Emitter.Emit(event)
-                v
-T0+5ms  ┌──────────────────────────────┐
-        │ .sbdb/events/2026-04-26.jsonl│  ← append-only,
-        │                              │     lock-free,
-        │ {"ts":"…","type":"note.      │     ≤ 4 KiB / line
-        │   created","id":"…"}         │
-        └──────────────────────────────┘
-                │
-                │ (file grows past 5000 lines → rotate)
-                v
-        ┌──────────────────────────────┐
-        │ 2026-04-26.001.jsonl         │   slice 001
-        │ 2026-04-26.002.jsonl         │   slice 002
-        └──────────────────────────────┘
-
-T+~62 days  current = July, previous = June, May is now expired
-            sbdb doctor fix
-                │
-                │ Archiver.archiveMonth(2026, 5)
-                v
-        ┌─────────────────────────────────────┐
-        │  concat 2026-05-*.jsonl → gzip → tmp│
-        │  verify: line count + tail hash     │
-        │  → upload via target (git or S3)    │
-        │  → write archive/2026.MANIFEST.yaml │
-        │  → emit meta.archived event         │
-        │  → remove daily files               │
-        └─────────────────────────────────────┘
-                │
-                v
-        ┌──────────────────────────────────────┐
-        │  archive/2026-05.jsonl.gz            │  immutable
-        │  archive/2026.MANIFEST.yaml          │  growing index
-        │  archive/2026-05.pointer.yaml (S3)   │  if S3 target
-        └──────────────────────────────────────┘
-                │
-                │ Workers see meta.archived in live stream
-                v
-       ┌──────────────────────────┐
-       │ worker advances cursor   │
-       │ no need to read archive  │
-       │ unless replaying history │
-       └──────────────────────────┘
+   ┌──────────────────────────────────────────────────┐
+   │  sbdb events emit <commit-from> [<commit-to>]    │
+   └─────────────────────┬────────────────────────────┘
+                         │
+                         │ shell out to:
+                         │   git log --reverse --raw --no-renames \
+                         │     --no-merges -z <from>..<to>
+                         v
+              ┌──────────────────────┐
+              │  parse NUL-delimited │
+              │  token stream from   │
+              │  git plumbing        │
+              └──────────┬───────────┘
+                         │
+                         │  per commit, per changed file:
+                         │   • status A/C → created
+                         │   • status M   → updated
+                         │   • status D   → deleted
+                         │   • blob hashes from tree → sha / prev
+                         │   • path matched against schemas' docs_dir → bucket
+                         v
+              ┌──────────────────────┐
+              │  build Event{ts,     │
+              │   type, id, sha,     │
+              │   prev, op, actor}   │
+              └──────────┬───────────┘
+                         │
+                         │  one JSON line per event
+                         v
+                    ┌────────┐
+                    │ stdout │
+                    └────────┘
 ```
+
+Files outside any schema's `docs_dir` are skipped. `op` is the commit hash, naturally grouping events from one commit. `actor` is the commit author email.
 
 ### Worker fan-out
 
-How an external worker consumes events from `main`:
+How an external worker consumes events:
 
 ```
                   ┌──────────────────────────┐
                   │  GitHub / GitLab repo    │
                   │  (main branch)           │
-                  │                          │
-                  │  .sbdb/events/*.jsonl    │
                   └────────────┬─────────────┘
                                │  on push to main
                                v
-                  ┌──────────────────────────┐
-                  │  Worker process          │
-                  │                          │
-                  │  • git pull              │
-                  │  • read events since     │
-                  │    last (year, mon, seq) │
-                  │  • for each new line:    │
-                  └──────┬─────────────┬─────┘
+                  ┌──────────────────────────────────┐
+                  │  Worker process                  │
+                  │                                  │
+                  │  • git pull                      │
+                  │  • sbdb events emit "$LAST_SEEN" │
+                  │  • for each JSON line on stdin:  │
+                  │    ─ resolve content via         │
+                  │      git cat-file blob <sha>     │
+                  │    ─ persist last seen op        │
+                  │      (commit hash) for next run  │
+                  └──────┬─────────────┬─────────────┘
                          │             │
               ┌──────────┘             └──────────┐
               v                                   v
@@ -774,7 +740,7 @@ How an external worker consumes events from `main`:
     └──────────────────┘                └──────────────────┘
 ```
 
-The repo is the broker. The events directory is the topic. `git pull` is the subscription protocol. No separate infrastructure required to start.
+The repo is the broker. The commit hash is the cursor. `git pull` is the subscription protocol. The projection is deterministic — re-running with the same `<from>..<to>` produces the byte-identical stream, so workers can replay history at any time.
 
 ## Compatibility
 
@@ -846,25 +812,24 @@ manual editing         →  integrity signing (SHA-256 + HMAC tamper detection)
 file browsing          →  QuerySet with filters, ordering, pagination
 Ctrl+F                 →  semantic search (embeddings + cosine similarity)
 mental model           →  knowledge graph (auto-extracted from links + refs)
-git log                →  append-only event stream (.sbdb/events/*.jsonl) workers can tail
+git log                →  projected on demand by `sbdb events emit` into a JSONL stream on stdout
 ```
 
 ## AI agent integration
 
-Every command outputs structured JSON when piped or with `--format json`. Exit codes are stable (0=ok, 2=not found, 3=validation, 4=drift or event-window violation, 6=tamper). Designed as a CLI API for Claude Code and other AI agents.
+Every command outputs structured JSON when piped or with `--format json`. Exit codes are stable (0=ok, 2=not found, 3=validation, 4=drift, 6=tamper). Designed as a CLI API for Claude Code and other AI agents.
 
-The agent also gets a built-in audit channel: every CRUD or doctor-run mutation emits an event. An agent that just edited `task.md` doesn't need to diff the file to know what happened — the next line in `.sbdb/events/<today>.jsonl` says it.
+The agent also gets a built-in audit channel: git history. After a commit, `sbdb events emit HEAD~1` enumerates exactly what changed in JSONL form — an agent that just edited `task.md` and committed doesn't need to diff the file, the projection tells it.
 
 ### Claude Code plugin
 
 A plugin is available via the [bershadsky-claude-tools marketplace](https://github.com/sergio-bershadsky/ai). Install with: `/plugin marketplace add sergio-bershadsky/ai` then `/plugin install secondbrain-db`.
 
-The plugin ships two PreToolUse guards that protect sbdb-managed repos from out-of-band AI edits:
+The plugin ships a PreToolUse guard that protects sbdb-managed repos from out-of-band AI edits:
 
 - `guard-docs.py` — blocks Write/Edit/MultiEdit/NotebookEdit and Bash mutations targeting `docs/`. The AI must use `sbdb create / update / delete` instead.
-- `guard-events.py` — blocks any direct edit to `.sbdb/events/**` (live log) and `.sbdb/events/archive/**` (sealed archives). All event writes go through `sbdb event append` or the doctor archival path; nothing else can touch the audit log.
 
-Both guards activate only when `.sbdb.toml` is present at the repo root. They print install guidance if the `sbdb` CLI is missing.
+The guard activates only when `.sbdb.toml` is present at the repo root. It prints install guidance if the `sbdb` CLI is missing.
 
 ## License
 
