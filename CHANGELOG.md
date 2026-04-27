@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.2.0](https://github.com/sergio-bershadsky/secondbrain-db/compare/v1.1.1...v1.2.0) (2026-04-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* **events:** events are no longer stored on disk. Pre-existing .sbdb/events/ directories are orphaned and may be removed. Workers that tailed .sbdb/events/*.jsonl switch to piping sbdb events emit. The [events] config section is silently ignored. The CLI surface changes: sbdb event {append,show,types,repair,rebuild-registry} are removed; only sbdb events emit remains.
+
+### Features
+
+* **events:** project events from git history; remove on-disk events log ([#15](https://github.com/sergio-bershadsky/secondbrain-db/issues/15)) ([382609e](https://github.com/sergio-bershadsky/secondbrain-db/commit/382609eeccf0bfc397a4450f9130671664f5f134)), closes [#14](https://github.com/sergio-bershadsky/secondbrain-db/issues/14)
+
+
+### Bug Fixes
+
+* **ci:** bump Go toolchain to 1.25.3 to clear govulncheck stdlib advisories ([#12](https://github.com/sergio-bershadsky/secondbrain-db/issues/12)) ([f8f0fa7](https://github.com/sergio-bershadsky/secondbrain-db/commit/f8f0fa732c0c981110ee9dda173299a891b33200)), closes [#11](https://github.com/sergio-bershadsky/secondbrain-db/issues/11)
+
+
+### Miscellaneous Chores
+
+* release as 1.2.0 ([87be375](https://github.com/sergio-bershadsky/secondbrain-db/commit/87be375b38d8a36b67a54964d6062bd1f3295557))
+
 ## [1.1.1](https://github.com/sergio-bershadsky/secondbrain-db/compare/v1.1.0...v1.1.1) (2026-04-27)
 
 
