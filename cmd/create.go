@@ -139,14 +139,6 @@ func runCreate(cmd *cobra.Command, _ []string) error {
 	return output.PrintData(format, result)
 }
 
-// eventBucket returns the schema's event bucket name. Defaults to entity.
-func eventBucket(s *schemapkg.Schema) string {
-	if s.Bucket != "" {
-		return s.Bucket
-	}
-	return s.Entity
-}
-
 // parseFieldValue attempts to interpret a CLI string value as a typed value.
 func parseFieldValue(s string) any {
 	// Try JSON array/object
