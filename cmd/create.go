@@ -133,10 +133,6 @@ func runCreate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	// Spec §4.1: emit <bucket>.created on successful write.
-	emitDocEvent(cfg, eventBucket(s), "created", doc.ID(),
-		shaFile(doc.FilePath()))
-
 	// Output the created record
 	result := doc.AllData()
 	result["file"] = doc.RelativeFilePath()

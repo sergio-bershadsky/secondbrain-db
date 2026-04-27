@@ -8,6 +8,9 @@ import (
 )
 
 // Config holds the application configuration loaded from .sbdb.toml and env vars.
+//
+// Note: there is no `events` section. Events are not stored on disk —
+// they are projected from git history on demand by `sbdb events emit`.
 type Config struct {
 	SchemaDir      string               `mapstructure:"schema_dir"`
 	BasePath       string               `mapstructure:"base_path"`
@@ -15,41 +18,6 @@ type Config struct {
 	Output         OutputConfig         `mapstructure:"output"`
 	Integrity      IntegrityConfig      `mapstructure:"integrity"`
 	KnowledgeGraph KnowledgeGraphConfig `mapstructure:"knowledge_graph"`
-	Events         EventsConfig         `mapstructure:"events"`
-}
-
-// EventsConfig controls the append-only event log.
-type EventsConfig struct {
-	Enabled           bool          `mapstructure:"enabled"`
-	WindowMonths      int           `mapstructure:"window_months"`
-	RotationLines     int           `mapstructure:"rotation_lines"`
-	MaxLineBytes      int           `mapstructure:"max_line_bytes"`
-	AllowNonPosix     bool          `mapstructure:"allow_non_posix"`
-	EmitSearchQueried bool          `mapstructure:"emit_search_queried"`
-	Archive           ArchiveConfig `mapstructure:"archive"`
-}
-
-// ArchiveConfig controls how expired event months are archived.
-type ArchiveConfig struct {
-	Target          string          `mapstructure:"target"` // "git" | "s3" | "both"
-	GzipLevel       int             `mapstructure:"gzip_level"`
-	SettleDays      int             `mapstructure:"settle_days"`
-	MaxArchiveBytes int64           `mapstructure:"max_archive_bytes"` // refuse archives larger than this
-	S3              S3ArchiveConfig `mapstructure:"s3"`
-}
-
-// S3ArchiveConfig holds S3 archival settings (used when target = "s3" or "both").
-type S3ArchiveConfig struct {
-	Bucket       string `mapstructure:"bucket"`
-	Prefix       string `mapstructure:"prefix"`
-	Region       string `mapstructure:"region"`
-	StorageClass string `mapstructure:"storage_class"`
-	KMSKeyID     string `mapstructure:"kms_key_id"`
-	SSE          string `mapstructure:"sse"`
-	Auth         string `mapstructure:"auth"` // env | profile | instance | irsa
-	Profile      string `mapstructure:"profile"`
-	EndpointURL  string `mapstructure:"endpoint_url"`
-	ObjectLock   bool   `mapstructure:"object_lock"`
 }
 
 // KnowledgeGraphConfig controls the SQLite knowledge graph and semantic search.
@@ -105,19 +73,6 @@ func Load(basePath string) (*Config, error) {
 	v.SetDefault("knowledge_graph.graph.auto_index", true)
 	v.SetDefault("knowledge_graph.graph.extract_links", true)
 	v.SetDefault("knowledge_graph.graph.validate_refs", false)
-	v.SetDefault("events.enabled", false)
-	v.SetDefault("events.window_months", 2)
-	v.SetDefault("events.rotation_lines", 5000)
-	v.SetDefault("events.max_line_bytes", 4096)
-	v.SetDefault("events.allow_non_posix", false)
-	v.SetDefault("events.emit_search_queried", false)
-	v.SetDefault("events.archive.target", "git")
-	v.SetDefault("events.archive.gzip_level", 9)
-	v.SetDefault("events.archive.settle_days", 7)
-	v.SetDefault("events.archive.max_archive_bytes", 1<<30) // 1 GiB
-	v.SetDefault("events.archive.s3.storage_class", "STANDARD_IA")
-	v.SetDefault("events.archive.s3.sse", "AES256")
-	v.SetDefault("events.archive.s3.auth", "env")
 
 	// Config file
 	v.SetConfigName(".sbdb")
