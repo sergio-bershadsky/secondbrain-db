@@ -502,7 +502,7 @@ The **2-month live window** is the rule: the current month and the immediately p
 {"ts":"2026-04-26T14:32:01.123Z","type":"note.created","id":"notes/2026/04/foo.md","sha":"def012","actor":"cli"}
 ```
 
-Required fields: `ts` (RFC 3339 UTC), `type` (e.g. `note.created`, `x.recipe.cooked`), `id`. Optional: `sha`, `prev`, `op` (groups events from one logical operation), `phase`, `actor` (`cli` | `hook` | `worker` | `agent`), `data` (object). Hard cap: 4 KiB per line.
+Required fields: `ts` (RFC 3339 UTC), `type` (e.g. `note.created`, `x.recipe.cooked`), `id`. Optional: `sha` (git blob hash of the file's post-event content — same as `git hash-object`, so workers can `git cat-file blob <sha>` directly), `prev` (git blob hash before the event), `op` (groups events from one logical operation), `phase`, `actor` (`cli` | `hook` | `worker` | `agent`), `data` (object). Hard cap: 4 KiB per line.
 
 ### Built-in event catalog
 

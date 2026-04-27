@@ -67,8 +67,8 @@ Every event is exactly one JSON object on one line, with a trailing `\n`.
 
 | Field | Type | Notes |
 |---|---|---|
-| `sha` | string | Hex-encoded SHA-256 of the affected file's content **after** the event. Required for document mutation events; omitted for events with no file (e.g. registry events). |
-| `prev` | string | SHA-256 before the event. Used on `*.updated` events to anchor diffs. |
+| `sha` | string | Git blob hash of the affected file's content **after** the event — the same hex string `git hash-object` produces (`sha1("blob <len>\0" + bytes)`). This is git's native object identifier, so workers can resolve content directly via `git cat-file blob <sha>` and locate introducing commits via `git log --find-object=<sha>`. Required for document mutation events; omitted for events with no file (e.g. registry events). |
+| `prev` | string | Git blob hash before the event. Used on `*.updated` events to anchor diffs. |
 | `op` | string | ULID grouping events emitted from one logical operation. |
 | `phase` | string | Sub-step within an `op` for ordered cascades. Free-form short identifier (e.g. `"graph"`, `"index"`). |
 | `actor` | enum | `cli` \| `hook` \| `worker` \| `agent`. Closed enum in v1. |

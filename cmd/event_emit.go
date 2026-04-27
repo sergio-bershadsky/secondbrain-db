@@ -2,8 +2,9 @@ package cmd
 
 import (
 	"context"
-	"crypto/sha256"
+	"crypto/sha1"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"sync"
 	"time"
@@ -60,13 +61,22 @@ func emitIntegrityEvent(cfg *config.Config, verb, id string, count int) {
 	_ = em.Emit(context.Background(), ev)
 }
 
-// shaContent returns the hex SHA-256 of the given byte slice.
+// shaContent returns the git blob hash of the given byte slice — the same
+// hex string `git hash-object` would produce. Format: sha1("blob <len>\0" + bytes).
+//
+// Using git's native blob format (not a plain sha256 of the bytes) means the
+// event's `sha` field is a direct pointer into git's object store. A worker
+// tailing events can run `git cat-file blob <sha>` to retrieve the exact
+// content the event describes, or `git log --find-object=<sha>` to locate
+// the commit(s) that introduced it.
 func shaContent(b []byte) string {
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:])
+	h := sha1.New()
+	fmt.Fprintf(h, "blob %d\x00", len(b))
+	h.Write(b)
+	return hex.EncodeToString(h.Sum(nil))
 }
 
-// shaFile reads a file and returns its hex SHA-256, or empty on error.
+// shaFile reads a file and returns its git blob hash, or empty on error.
 func shaFile(path string) string {
 	data, err := os.ReadFile(path)
 	if err != nil {
