@@ -78,8 +78,6 @@ func runDelete(cmd *cobra.Command, _ []string) error {
 		if err := doc.Save(rt); err != nil {
 			return err
 		}
-		emitDocEvent(cfg, eventBucket(s), "updated", doc.ID(),
-			shaFile(doc.FilePath()))
 		return output.PrintData(format, map[string]any{
 			"action": "soft_delete", "id": deleteID, "status": "archived",
 		})
@@ -91,9 +89,6 @@ func runDelete(cmd *cobra.Command, _ []string) error {
 	if err := doc.Delete(); err != nil {
 		return err
 	}
-
-	// Spec §4.1: emit <bucket>.deleted on successful removal.
-	emitDocEvent(cfg, eventBucket(s), "deleted", deleteID, "")
 
 	return output.PrintData(format, map[string]any{
 		"action": "deleted", "id": deleteID,

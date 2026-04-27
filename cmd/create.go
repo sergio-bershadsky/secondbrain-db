@@ -133,22 +133,10 @@ func runCreate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	// Spec §4.1: emit <bucket>.created on successful write.
-	emitDocEvent(cfg, eventBucket(s), "created", doc.ID(),
-		shaFile(doc.FilePath()))
-
 	// Output the created record
 	result := doc.AllData()
 	result["file"] = doc.RelativeFilePath()
 	return output.PrintData(format, result)
-}
-
-// eventBucket returns the schema's event bucket name. Defaults to entity.
-func eventBucket(s *schemapkg.Schema) string {
-	if s.Bucket != "" {
-		return s.Bucket
-	}
-	return s.Entity
 }
 
 // parseFieldValue attempts to interpret a CLI string value as a typed value.

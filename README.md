@@ -459,161 +459,54 @@ integrity: strict             # "strict", "warn", or "off"
 
 ## Events
 
-Every state-changing operation `sbdb` performs emits an immutable, append-only event line to `.sbdb/events/<date>.jsonl`. The events log is the repo's built-in audit trail and change feed: workers tail the repo, see what changed, stream it downstream (SNS / SQS / Kafka / webhooks), all without re-parsing markdown.
+Events are not stored anywhere. They are projected from git history on demand by the `sbdb events emit` command, which walks commits in a range and emits one JSONL event per file change under a known schema's `docs_dir`. The repo's git log IS the event log — every commit produces zero or more events; nothing else is written.
 
-The full normative spec lives in [`docs/superpowers/specs/2026-04-24-sbdb-events-design.md`](docs/superpowers/specs/2026-04-24-sbdb-events-design.md). This section is the operator-facing summary.
-
-### Enable it
-
-```toml
-# .sbdb.toml
-[events]
-enabled       = true
-window_months = 2          # always keep current + previous month live
-rotation_lines = 5000      # rotate daily file at this size
-
-[events.archive]
-target = "git"             # "git" | "s3" | "both"
-```
-
-`events.enabled = false` is the safe default; nothing is written until you opt in.
-
-### File layout
-
-```
-.sbdb/events/
-  2026-03-01.jsonl           # previous full month (live, daily files)
-  2026-03-02.jsonl
-  ...
-  2026-04-26.jsonl           # today (current month)
-  2026-04-26.001.jsonl       # rotation slice once a daily file passes 5000 lines
-  archive/
-    2026.MANIFEST.yaml       # year roll-up (line counts, hashes per month)
-    2026-02.jsonl.gz         # everything older — sealed, immutable
-    2025.MANIFEST.yaml
-    2025-12.jsonl.gz
-```
-
-The **2-month live window** is the rule: the current month and the immediately previous month exist as plain `.jsonl` (mergeable, diffable, human-readable in PRs). Anything older is sealed in `archive/` as gzipped JSONL plus a year manifest. `sbdb doctor check` reports a window violation as exit 4; `sbdb doctor fix` performs the archival.
-
-### Wire format (one event per line)
-
-```json
-{"ts":"2026-04-26T14:32:01.123Z","type":"note.created","id":"notes/2026/04/foo.md","sha":"def012","actor":"cli"}
-```
-
-Required fields: `ts` (RFC 3339 UTC), `type` (e.g. `note.created`, `x.recipe.cooked`), `id`. Optional: `sha`, `prev`, `op` (groups events from one logical operation), `phase`, `actor` (`cli` | `hook` | `worker` | `agent`), `data` (object). Hard cap: 4 KiB per line.
-
-### Built-in event catalog
-
-`sbdb event types` lists every registered type. Built-in buckets:
-
-- **Document lifecycle**: `note.{created,updated,deleted}`, `task.{created,updated,deleted,status_changed,completed}`, `adr.{created,proposed,accepted,superseded,rejected}`, `discussion.{created,updated,action_added,action_resolved}`
-- **Knowledge graph**: `graph.{node_added,node_removed,edge_added,edge_removed,reindexed}`
-- **Index / embeddings**: `kb.{indexed,chunk_added,chunk_removed,embedding_updated,model_changed}`
-- **Records**: `records.{upserted,removed,partition_rotated}`
-- **Integrity**: `integrity.{signed,recomputed,drift_detected,tamper_detected}`
-- **Review / freshness**: `review.stamped`, `freshness.stale_flagged`
-- **Meta**: `meta.{archived,event_type_registered,event_type_evolved,event_type_deprecated,config_changed}`
-- **Search** (opt-in, off by default): `search.queried`
-
-40+ types total. Renames are not a thing; a file move emits `<bucket>.deleted` + `<bucket>.created` with matching `sha` so consumers can reconstruct the rename if they care.
-
-### CLI
+The normative spec lives in [`docs/superpowers/specs/2026-04-24-sbdb-events-design.md`](docs/superpowers/specs/2026-04-24-sbdb-events-design.md). The summary:
 
 ```bash
-sbdb event types                  # list every registered type
-sbdb event show 20                # last 20 events
-sbdb event append \                # programmatic append (for hooks, scripts)
-  --type note.created \
-  --id notes/foo.md \
-  --sha abc123
-sbdb event rebuild-registry        # regenerate registry.yaml from event log
-sbdb event repair --file 2026-04-26.jsonl --truncate-partial
-                                   # explicit recovery from a crashed write
-                                   # (sbdb never auto-truncates)
+sbdb events emit <commit-from> [<commit-to>|latest]
 ```
 
-### Author extensions: `x.*` namespace
+- `<commit-from>` accepts any git commit-ish (sha, branch, tag, `HEAD~N`, `@{1.week.ago}`).
+- `<commit-to>` defaults to `HEAD`.
+- Output is JSONL on stdout, suitable for piping.
 
-Built-in types use bare names (`note.*`, `task.*`). Author entities use `x.*` so they can never collide with current or future built-ins. Declare them in your schema:
+### Wire format
 
-```yaml
-# schemas/recipes.yaml
-entity: x.recipe
-bucket: x.recipe
-event_types:
-  created:
-    data:
-      fields:
-        - { name: title,  type: string, required: true }
-        - { name: source, type: string }
-  updated:
-    data:
-      fields:
-        - { name: changed_keys, type: list, required: true }
-  deleted:
-    data: {}
-  cooked:
-    data:
-      fields:
-        - { name: date,   type: date, required: true }
-        - { name: rating, type: int }
+```json
+{"ts":"2026-04-26T14:32:01.000Z","type":"note.updated","id":"docs/notes/foo.md","sha":"<git-blob-hash>","prev":"<git-blob-hash>","op":"<commit-sha>","actor":"alice@example.com"}
 ```
 
-When `sbdb doctor check` first sees the new schema, it emits `meta.event_type_registered` for every declared type and adds them to the registry projection at `internal/events/registry.yaml`. Authors who need to extend a built-in type's `data` payload nest their fields under `data.x.*` (so built-ins can never clash with author additions).
+- `ts` is the commit's author-date.
+- `type` is `<bucket>.<verb>` — verbs are derived from git diff status (`A`/`C` → `created`, `M` → `updated`, `D` → `deleted`).
+- `id` is the repo-relative POSIX path of the affected file.
+- `sha` / `prev` are git blob hashes — workers resolve content directly with `git cat-file blob <sha>`.
+- `op` is the commit hash, naturally grouping all events from one commit.
+- `actor` is the commit author email.
 
-### Schema evolution rules
+There is no `data` field. There is no `[events]` config section. There is no `.sbdb/events/` directory.
 
-Type schemas evolve under strict additive rules. The full matrix lives in spec §6.3; the gist:
+### Examples
 
-| Change | Allowed |
-|---|---|
-| Add an optional field | yes |
-| Add an enum value | yes |
-| Loosen a constraint (e.g. `max_length` grows) | yes |
-| Mark deprecated, edit description | yes |
-| Add a required field | no — register a new type |
-| Rename / remove a field | no |
-| Change a type, flip required ↔ optional | no |
-| Tighten a constraint | no |
+```bash
+# Last week of events
+sbdb events emit @{1.week.ago}
 
-Doctor enforces this on every check. Forbidden changes are rejected at registry-update time; allowed changes emit `meta.event_type_evolved` and bump the type's schema version.
+# Filter to a specific bucket
+sbdb events emit HEAD~50 | jq 'select(.type == "note.created")'
 
-### Concurrency & integrity
+# Pipe into a worker
+sbdb events emit "$LAST_SEEN_COMMIT" | my-fanout-worker
 
-- **Lock-free**. POSIX `O_APPEND` plus the 4 KiB cap means concurrent writers — multiple goroutines, multiple sbdb subprocesses, the PostToolUse hook firing during a long sbdb command — never interleave. No `flock`, no sidecar lock files. Verified by tests at `internal/events/concurrency_test.go` and `concurrency_subprocess_test.go` (16 subprocesses × 5,000 events, zero corruption).
-- **Append-only.** sbdb never modifies an existing event line. Crash recovery is explicit: `sbdb doctor check` flags a partial trailing line; `sbdb event repair --truncate-partial` is the only path to clean it up.
-- **Tamper-evident.** Daily-file tail hashes live in the integrity manifest; archive `.gz` files have content + gz hashes recorded in `<year>.MANIFEST.yaml`. Doctor verifies all of this end-to-end.
+# Replay any range, deterministically
+sbdb events emit v1.0.0 v1.1.0
+```
 
 ### Worker pattern
 
-Workers consuming the events stream:
+The cursor is the **commit hash**. Workers persist the most recent commit they processed and pass it back as `<commit-from>` next time. The projection is deterministic and fully replayable — re-running with the same range produces the identical stream.
 
-1. `git pull` to sync the repo.
-2. Walk `.sbdb/events/*.jsonl` in lex order.
-3. Track position as `(year, month, seq)` — stable across daily rotation, monthly archival, and rebases. Never use file paths or byte offsets as cursors.
-4. On `meta.archived` event, the worker knows everything in that month is sealed and can skip ahead or pull the gz from `archive/` (or S3) for replay.
-5. At-least-once delivery: workers MUST tolerate duplicates and key downstream effects on `(type, id, sha)`.
-
-The worker doesn't need to read markdown files at all — events carry enough to route, fan out, or summarize.
-
-### Archive targets: git or S3
-
-```toml
-[events.archive]
-target = "s3"
-
-[events.archive.s3]
-bucket        = "my-sbdb-archive"
-prefix        = "secondbrain/events/"
-region        = "us-east-1"
-storage_class = "STANDARD_IA"
-sse           = "AES256"
-auth          = "env"            # env | profile | instance | irsa
-```
-
-When `target = "s3"` (or `"both"`), each archived month gets a small `<month>.pointer.yaml` in the repo recording the SHA, line count, and S3 URI. The repo always retains the audit chain even when the gz blobs live remote. Idempotent: re-running `doctor fix` on an already-archived month is a no-op; if S3 already has the blob with matching hash, upload is skipped.
+There is no at-least-once / exactly-once concern at this layer because there is no delivery; the projection is a pull. Workers wanting exactly-once semantics key side-effects on `(op, id)` (commit + path) in their own idempotency table.
 
 ## How it works
 
@@ -622,8 +515,8 @@ When `target = "s3"` (or `"both"`), each archived month gets a small `<month>.po
 - **Virtual fields** are computed from content via sandboxed Starlark, materialized on save
 - **Queries** read only `records.yaml` (fast, no file I/O per record)
 - **Integrity manifest** tracks SHA-256 of content, frontmatter, and record for every doc
-- **Doctor** detects drift (frontmatter vs record), tamper (hash mismatch), and event-window violations
-- **Events** record every state change as an immutable JSONL line; doctor archives expired months to `git` or `s3`
+- **Doctor** detects drift (frontmatter vs record) and tamper (hash mismatch)
+- **Events** are derived from git history on demand — the repo's git log IS the event log
 
 ### Component dependency map
 

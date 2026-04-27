@@ -21,7 +21,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -38,11 +37,10 @@ fields:
   slug:  { type: string, required: true }
 `
 
-// configWithEvents enables the events feature in the .sbdb.toml fixture.
-const configWithEvents = `default_schema = "note"
-
-[events]
-enabled = true
+// configMinimal is the .sbdb.toml fixture used when a test needs the
+// events subsystem (i.e., a git repo + projection). Events are no longer
+// configurable — they are projected from git history on demand.
+const configMinimal = `default_schema = "note"
 `
 
 // project bundles a temp project root + the path to the built sbdb binary.
@@ -53,7 +51,11 @@ type project struct {
 
 // newProject returns a fresh tempdir initialised with the note schema and
 // .sbdb.toml. The binary is compiled once per test run via build().
-func newProject(t *testing.T, withEvents bool) *project {
+// newProject creates a fresh tempdir initialized with the note schema and a
+// minimal .sbdb.toml. The legacy `withEvents` parameter is preserved as a
+// no-op so existing tests don't need rewriting; events are now always
+// available via `sbdb events emit` and don't need configuration.
+func newProject(t *testing.T, _ bool) *project {
 	t.Helper()
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "schemas"), 0o755))
@@ -69,19 +71,11 @@ func newProject(t *testing.T, withEvents bool) *project {
 		[]byte("[]\n"),
 		0o644,
 	))
-	if withEvents {
-		require.NoError(t, os.WriteFile(
-			filepath.Join(root, ".sbdb.toml"),
-			[]byte(configWithEvents),
-			0o644,
-		))
-	} else {
-		require.NoError(t, os.WriteFile(
-			filepath.Join(root, ".sbdb.toml"),
-			[]byte("default_schema = \"note\"\n"),
-			0o644,
-		))
-	}
+	require.NoError(t, os.WriteFile(
+		filepath.Join(root, ".sbdb.toml"),
+		[]byte(configMinimal),
+		0o644,
+	))
 	return &project{root: root, binary: ensureBinary(t)}
 }
 
@@ -150,118 +144,86 @@ func TestCRUD_RoundTrip(t *testing.T) {
 	require.Equal(t, 2, code, "expected NOT_FOUND exit code 2 after delete")
 }
 
-// TestEventsCRUD_EmitsEvents asserts that CRUD on documents emits the
-// matching note.created / note.updated / note.deleted events when
-// events.enabled = true.
-func TestEventsCRUD_EmitsEvents(t *testing.T) {
-	p := newProject(t, true)
+// TestEventsEmit_FromGitHistory asserts the `sbdb events emit` projection
+// produces correct JSONL events for a sequence of git commits that touch
+// files under a known schema's docs_dir. Replaces the older on-disk
+// "events emitted on CRUD" check — events are no longer stored anywhere;
+// the projection is computed from the git log on demand.
+func TestEventsEmit_FromGitHistory(t *testing.T) {
+	p := newProject(t, false)
 
-	_ = p.runOK(t,
-		"create",
-		"--field", "title=Hello",
-		"--field", "slug=hello",
-		"--content", "First.",
-		"--format", "json",
-	)
-	_ = p.runOK(t, "update", "--id", "hello", "--field", "title=Updated", "--format", "json")
-	_ = p.runOK(t, "delete", "--id", "hello", "--yes", "--format", "json")
+	// Initialize the project as a git repo and make commits with both
+	// schema-relevant and irrelevant files.
+	gitInitInProject(t, p.root)
+	gitCommitFile(t, p.root, "docs/notes/foo.md", "# Foo\n", "add foo")
+	gitCommitFile(t, p.root, "docs/notes/foo.md", "# Foo updated\n", "update foo")
+	gitCommitFile(t, p.root, "README.md", "readme\n", "out-of-scope file")
+	gitCommitDelete(t, p.root, "docs/notes/foo.md", "delete foo")
 
-	lines := readEvents(t, p.root)
-	require.GreaterOrEqual(t, len(lines), 3, "expected >=3 events, got %d", len(lines))
+	// Project events from the very first commit (the init one) onwards.
+	out := p.runOK(t, "events", "emit", "HEAD~4", "HEAD")
 
-	types := make([]string, 0, len(lines))
+	lines := splitLines(out)
+	// Three in-scope events: created, updated, deleted. README should be skipped.
+	require.Len(t, lines, 3, "got: %s", out)
+
+	types := make([]string, 0, 3)
 	for _, line := range lines {
 		var ev struct {
 			Type string `json:"type"`
+			ID   string `json:"id"`
 		}
-		require.NoError(t, json.Unmarshal([]byte(line), &ev), "invalid event JSON: %s", line)
+		require.NoError(t, json.Unmarshal([]byte(line), &ev), line)
+		require.Equal(t, "docs/notes/foo.md", ev.ID)
 		types = append(types, ev.Type)
 	}
-	require.Contains(t, types, "note.created")
-	require.Contains(t, types, "note.updated")
-	require.Contains(t, types, "note.deleted")
+	require.Equal(t, []string{"note.created", "note.updated", "note.deleted"}, types)
 }
 
-// TestEventTypes_ListsBuiltins verifies `sbdb event types` includes every
-// expected built-in bucket from the spec catalog.
-func TestEventTypes_ListsBuiltins(t *testing.T) {
-	p := newProject(t, true)
-	out := p.runOK(t, "event", "types")
+// gitInitInProject initializes a git repo in the project root with a
+// baseline commit that includes the schemas + .sbdb.toml fixtures so HEAD~N
+// references work for events emit.
+func gitInitInProject(t *testing.T, dir string) {
+	t.Helper()
+	mustRunGit(t, dir, "init", "-q", "-b", "main")
+	mustRunGit(t, dir, "config", "user.email", "test@example.com")
+	mustRunGit(t, dir, "config", "user.name", "Test")
+	mustRunGit(t, dir, "config", "commit.gpgsign", "false")
+	mustRunGit(t, dir, "add", ".")
+	mustRunGit(t, dir, "commit", "-q", "-m", "init")
+}
 
-	for _, expected := range []string{
-		"note.created",
-		"note.updated",
-		"note.deleted",
-		"task.created",
-		"task.status_changed",
-		"adr.proposed",
-		"adr.accepted",
-		"discussion.action_added",
-		"graph.node_added",
-		"graph.edge_added",
-		"kb.indexed",
-		"kb.embedding_updated",
-		"records.upserted",
-		"integrity.signed",
-		"meta.archived",
-		"meta.event_type_registered",
-	} {
-		require.Contains(t, out, expected, "missing built-in type %q", expected)
+func gitCommitFile(t *testing.T, dir, relPath, content, msg string) {
+	t.Helper()
+	full := filepath.Join(dir, relPath)
+	require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o755))
+	require.NoError(t, os.WriteFile(full, []byte(content), 0o644))
+	mustRunGit(t, dir, "add", relPath)
+	mustRunGit(t, dir, "commit", "-q", "-m", msg)
+}
+
+func gitCommitDelete(t *testing.T, dir, relPath, msg string) {
+	t.Helper()
+	mustRunGit(t, dir, "rm", "-q", relPath)
+	mustRunGit(t, dir, "commit", "-q", "-m", msg)
+}
+
+func mustRunGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "git %v: %s", args, out)
+}
+
+func splitLines(s string) []string {
+	var out []string
+	for _, line := range strings.Split(s, "\n") {
+		if line != "" {
+			out = append(out, line)
+		}
 	}
-}
-
-// TestEventAppend_Show exercises the programmatic append + show pipeline.
-func TestEventAppend_Show(t *testing.T) {
-	p := newProject(t, true)
-
-	_ = p.runOK(t,
-		"event", "append",
-		"--type", "note.created",
-		"--id", "notes/test.md",
-		"--sha", "abc123",
-	)
-
-	out := p.runOK(t, "event", "show", "1")
-	require.Contains(t, out, `"type":"note.created"`)
-	require.Contains(t, out, `"id":"notes/test.md"`)
-	require.Contains(t, out, `"sha":"abc123"`)
-}
-
-// TestDoctor_WindowViolation verifies that an old daily-events file
-// triggers exit 4 on `doctor check`, and that `doctor fix` archives it
-// and clears the violation.
-func TestDoctor_WindowViolation(t *testing.T) {
-	p := newProject(t, true)
-
-	// Plant an event from January (well outside live window).
-	eventsDir := filepath.Join(p.root, ".sbdb", "events")
-	require.NoError(t, os.MkdirAll(eventsDir, 0o755))
-	stale := filepath.Join(eventsDir, "2026-01-15.jsonl")
-	require.NoError(t, os.WriteFile(
-		stale,
-		[]byte(`{"ts":"2026-01-15T10:00:00.000Z","type":"note.created","id":"notes/old.md"}`+"\n"),
-		0o644,
-	))
-
-	// doctor check should report exit 4 (drift / window violation).
-	stdout, _, code := p.run(t, "doctor", "check", "--format", "json")
-	require.Equal(t, 4, code, "expected exit 4 on window violation, got %d\n%s", code, stdout)
-	require.Contains(t, stdout, "event_window")
-
-	// doctor fix should archive January cleanly.
-	_ = p.runOK(t, "doctor", "fix", "--format", "json")
-
-	// Stale file gone, archive present.
-	_, err := os.Stat(stale)
-	require.True(t, os.IsNotExist(err), "stale daily file still present")
-
-	gz := filepath.Join(p.root, ".sbdb", "events", "archive", "2026-01.jsonl.gz")
-	_, err = os.Stat(gz)
-	require.NoError(t, err, "archive gz missing")
-
-	// doctor check now exits 0.
-	_, _, code = p.run(t, "doctor", "check", "--format", "json")
-	require.Equal(t, 0, code, "doctor check should be clean after fix")
+	return out
 }
 
 // TestVersion_Output asserts the `version` command prints something.
@@ -328,36 +290,4 @@ func repoRoot() (string, error) {
 		dir = filepath.Dir(dir)
 	}
 	return "", fmt.Errorf("go.mod not found searching up from %s", cwd)
-}
-
-// readEvents collects all event JSONL lines from the project's live event
-// files in lex order.
-func readEvents(t *testing.T, root string) []string {
-	t.Helper()
-	dir := filepath.Join(root, ".sbdb", "events")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		t.Fatalf("reading events dir: %v", err)
-	}
-	// Wait briefly for filesystem flush on slow CI runners.
-	time.Sleep(20 * time.Millisecond)
-	var lines []string
-	for _, ent := range entries {
-		if !strings.HasSuffix(ent.Name(), ".jsonl") {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(dir, ent.Name()))
-		if err != nil {
-			t.Fatalf("reading %s: %v", ent.Name(), err)
-		}
-		for _, line := range strings.Split(string(data), "\n") {
-			if line != "" {
-				lines = append(lines, line)
-			}
-		}
-	}
-	return lines
 }

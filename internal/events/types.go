@@ -1,9 +1,15 @@
-// Package events implements the append-only event log described in
-// docs/superpowers/specs/2026-04-24-sbdb-events-design.md.
+// Package events implements sbdb's event projection: a derived view of
+// git history shaped as JSONL events, emitted on demand by `sbdb events emit`.
 //
-// Events are immutable, append-only facts. The only mutable artifact in the
-// system is markdown file content (governed by git). Every other byte sbdb
-// writes here is write-once during routine operation.
+// There is no on-disk events log. Events are not stored; they are computed
+// from `git log --raw` on a commit range. Workers consume the projection
+// by piping the command's output. The repo's git history IS the event log.
+//
+// One commit produces zero or more events: one per file changed under a
+// schema's docs_dir. Verb mapping is purely structural — A → created,
+// M → updated, D → deleted. Each event names a place (`id`, the file path)
+// and a version (`sha`, git's blob hash from the post-image tree); a worker
+// resolves content via `git cat-file blob <sha>`.
 package events
 
 import (
@@ -13,117 +19,32 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	"unicode"
-
-	"golang.org/x/text/unicode/norm"
 )
 
-// Actor enumerates valid values for the closed `actor` field.
-type Actor string
-
-const (
-	ActorCLI    Actor = "cli"
-	ActorHook   Actor = "hook"
-	ActorWorker Actor = "worker"
-	ActorAgent  Actor = "agent"
-)
-
-func (a Actor) Valid() bool {
-	switch a {
-	case ActorCLI, ActorHook, ActorWorker, ActorAgent:
-		return true
-	}
-	return false
-}
-
-// Event is the in-memory representation of one event line. JSON output uses
-// fixed key order (see MarshalJSON) for diff readability.
+// Event is the wire-format envelope. Fields are tagged json:"-" because the
+// custom MarshalLine controls key order for diff readability and skips
+// empty optionals (never null).
 type Event struct {
-	TS    time.Time              `json:"-"`
-	Type  string                 `json:"-"`
-	ID    string                 `json:"-"`
-	SHA   string                 `json:"-"` // optional, hex sha256
-	Prev  string                 `json:"-"` // optional, hex sha256
-	Op    string                 `json:"-"` // optional, ULID
-	Phase string                 `json:"-"` // optional
-	Actor Actor                  `json:"-"` // optional
-	Data  map[string]interface{} `json:"-"` // optional
+	TS    time.Time `json:"-"`
+	Type  string    `json:"-"` // bucket.verb
+	ID    string    `json:"-"` // repo-relative POSIX path
+	SHA   string    `json:"-"` // git blob hash after the change (omitted on delete)
+	Prev  string    `json:"-"` // git blob hash before the change (omitted on create)
+	Op    string    `json:"-"` // commit hash — groups events from one commit
+	Actor string    `json:"-"` // commit author email (or "git" if none)
 }
 
-// MaxLineBytes is the hard cap on a serialized event line including trailing \n.
-// Spec §7.3.
-const MaxLineBytes = 4096
+// TypeRegex enforces the dotted-name format. Catalog membership is decided
+// at projection time; this only checks the structural shape.
+var TypeRegex = regexp.MustCompile(`^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$`)
 
-// TypeRegex is a permissive structural check; ValidTypeName adds the
-// segment-count rule that an author type (x.*) requires three or more
-// segments while built-ins require two.
-var TypeRegex = regexp.MustCompile(`^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$`)
-
-// ValidTypeName reports whether the type name conforms to spec §3.
-// Built-in: <bucket>.<verb> (≥ 2 segments). Author: x.<bucket>.<verb> (≥ 3 segments).
-func ValidTypeName(t string) bool {
-	if !TypeRegex.MatchString(t) {
-		return false
-	}
-	if strings.HasPrefix(t, "x.") && strings.Count(t, ".") < 2 {
-		return false
-	}
-	return true
-}
-
-// IDForbidden rejects ids with backslashes (POSIX paths only) or control chars.
-var idBackslash = regexp.MustCompile(`\\`)
-
-// ErrLineTooLarge is returned when serialized event would exceed MaxLineBytes.
-var ErrLineTooLarge = errors.New("event line exceeds 4 KiB cap")
+// ValidTypeName reports whether the type matches `<bucket>.<verb>`.
+func ValidTypeName(t string) bool { return TypeRegex.MatchString(t) }
 
 // ErrInvalidType is returned for malformed type names.
 var ErrInvalidType = errors.New("invalid event type")
 
-// ErrInvalidID is returned for malformed ids.
-var ErrInvalidID = errors.New("invalid event id")
-
-// ErrInvalidActor is returned for unknown actor values.
-var ErrInvalidActor = errors.New("invalid actor")
-
-// IsAuthorType reports whether the type belongs to the author namespace (x.*).
-func IsAuthorType(typeName string) bool {
-	return strings.HasPrefix(typeName, "x.")
-}
-
-// Bucket extracts the bucket from a type name. For built-in `note.created`
-// returns `note`. For author `x.recipe.created` returns `x.recipe`.
-func Bucket(typeName string) string {
-	if !ValidTypeName(typeName) {
-		return ""
-	}
-	if IsAuthorType(typeName) {
-		// strip "x." then take everything except the last segment
-		rest := typeName[2:]
-		if idx := strings.LastIndex(rest, "."); idx >= 0 {
-			return "x." + rest[:idx]
-		}
-		return "x." + rest
-	}
-	if idx := strings.Index(typeName, "."); idx >= 0 {
-		return typeName[:idx]
-	}
-	return typeName
-}
-
-// Verb extracts the verb segment from a type name.
-func Verb(typeName string) string {
-	if !ValidTypeName(typeName) {
-		return ""
-	}
-	if idx := strings.LastIndex(typeName, "."); idx >= 0 {
-		return typeName[idx+1:]
-	}
-	return ""
-}
-
-// Validate checks structural invariants. Does NOT check registry membership;
-// that's the appender's job.
+// Validate checks structural invariants. Returns nil on a well-formed event.
 func (e *Event) Validate() error {
 	if e.TS.IsZero() {
 		return errors.New("ts is required")
@@ -132,37 +53,18 @@ func (e *Event) Validate() error {
 		return fmt.Errorf("%w: %q", ErrInvalidType, e.Type)
 	}
 	if e.ID == "" {
-		return fmt.Errorf("%w: empty", ErrInvalidID)
-	}
-	if idBackslash.MatchString(e.ID) {
-		return fmt.Errorf("%w: backslash in id (POSIX paths only)", ErrInvalidID)
-	}
-	for _, r := range e.ID {
-		if unicode.IsControl(r) {
-			return fmt.Errorf("%w: control char in id", ErrInvalidID)
-		}
-	}
-	if !norm.NFC.IsNormalString(e.ID) {
-		return fmt.Errorf("%w: id must be NFC-normalized", ErrInvalidID)
-	}
-	if e.Actor != "" && !e.Actor.Valid() {
-		return fmt.Errorf("%w: %q", ErrInvalidActor, e.Actor)
+		return errors.New("id is required")
 	}
 	return nil
 }
 
 // MarshalLine serializes the event to a single JSON line with trailing \n.
-// Returns ErrLineTooLarge if the result exceeds MaxLineBytes.
-//
-// Key order is fixed: ts, type, id, sha, prev, op, phase, actor, data.
-// Empty/zero optional fields are omitted (never null).
+// Key order is fixed: ts, type, id, sha, prev, op, actor.
 func (e *Event) MarshalLine() ([]byte, error) {
 	if err := e.Validate(); err != nil {
 		return nil, err
 	}
 
-	// Build ordered output by writing to a strings.Builder then re-parsing
-	// is wasteful; instead use a small custom serializer that respects order.
 	var sb strings.Builder
 	sb.WriteByte('{')
 	first := true
@@ -207,69 +109,30 @@ func (e *Event) MarshalLine() ([]byte, error) {
 			return nil, err
 		}
 	}
-	if e.Phase != "" {
-		if err := write("phase", e.Phase); err != nil {
-			return nil, err
-		}
-	}
 	if e.Actor != "" {
-		if err := write("actor", string(e.Actor)); err != nil {
-			return nil, err
-		}
-	}
-	if len(e.Data) > 0 {
-		if err := write("data", e.Data); err != nil {
+		if err := write("actor", e.Actor); err != nil {
 			return nil, err
 		}
 	}
 	sb.WriteByte('}')
 	sb.WriteByte('\n')
-
-	out := []byte(sb.String())
-	if len(out) > MaxLineBytes {
-		return nil, fmt.Errorf("%w: %d bytes", ErrLineTooLarge, len(out))
-	}
-	return out, nil
+	return []byte(sb.String()), nil
 }
 
-// ParseLine decodes one JSON event line into an Event.
-func ParseLine(line []byte) (*Event, error) {
-	// strip trailing newline if present
-	for len(line) > 0 && (line[len(line)-1] == '\n' || line[len(line)-1] == '\r') {
-		line = line[:len(line)-1]
+// Bucket extracts the bucket from a type name. `note.created` → `note`.
+func Bucket(typeName string) string {
+	idx := strings.Index(typeName, ".")
+	if idx < 0 {
+		return ""
 	}
-	var raw struct {
-		TS    string                 `json:"ts"`
-		Type  string                 `json:"type"`
-		ID    string                 `json:"id"`
-		SHA   string                 `json:"sha,omitempty"`
-		Prev  string                 `json:"prev,omitempty"`
-		Op    string                 `json:"op,omitempty"`
-		Phase string                 `json:"phase,omitempty"`
-		Actor string                 `json:"actor,omitempty"`
-		Data  map[string]interface{} `json:"data,omitempty"`
+	return typeName[:idx]
+}
+
+// Verb extracts the verb from a type name. `note.created` → `created`.
+func Verb(typeName string) string {
+	idx := strings.LastIndex(typeName, ".")
+	if idx < 0 {
+		return ""
 	}
-	if err := json.Unmarshal(line, &raw); err != nil {
-		return nil, err
-	}
-	ts, err := time.Parse("2006-01-02T15:04:05.000Z", raw.TS)
-	if err != nil {
-		// fall back to a more permissive parse
-		ts, err = time.Parse(time.RFC3339Nano, raw.TS)
-		if err != nil {
-			return nil, fmt.Errorf("invalid ts %q: %w", raw.TS, err)
-		}
-	}
-	e := &Event{
-		TS:    ts,
-		Type:  raw.Type,
-		ID:    raw.ID,
-		SHA:   raw.SHA,
-		Prev:  raw.Prev,
-		Op:    raw.Op,
-		Phase: raw.Phase,
-		Actor: Actor(raw.Actor),
-		Data:  raw.Data,
-	}
-	return e, nil
+	return typeName[idx+1:]
 }
