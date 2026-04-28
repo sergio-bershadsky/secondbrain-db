@@ -14,6 +14,21 @@ func Load(path string) (*Schema, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading schema file %s: %w", path, err)
 	}
+
+	// Check for deprecated fields before defaults are applied by Parse/Validate.
+	var raw struct {
+		RecordsDir string `yaml:"records_dir"`
+		Partition  string `yaml:"partition"`
+	}
+	// Best-effort; ignore unmarshal errors — Parse below will catch real problems.
+	_ = yaml.Unmarshal(data, &raw)
+	if raw.RecordsDir != "" {
+		fmt.Fprintf(os.Stderr, "%s: 'records_dir' is deprecated and ignored in v2; remove it\n", path)
+	}
+	if raw.Partition != "" && raw.Partition != "none" {
+		fmt.Fprintf(os.Stderr, "%s: 'partition' is deprecated; v2 has no aggregate records to partition. If you want monthly directory layout under docs_dir, organize the filenames yourself (e.g., id values like 2026-04/hello)\n", path)
+	}
+
 	return Parse(data)
 }
 

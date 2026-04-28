@@ -1,6 +1,8 @@
 package schema
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -8,6 +10,24 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	old := os.Stderr
+	os.Stderr = w
+	done := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
+	fn()
+	w.Close()
+	os.Stderr = old
+	return <-done
+}
 
 const testSchemaYAML = `
 version: 1
@@ -134,4 +154,52 @@ func TestScalarAndComplexFields(t *testing.T) {
 	complex_ := s.ComplexFields()
 	assert.Contains(t, complex_, "tags")
 	assert.Contains(t, complex_, "sources")
+}
+
+func TestLoad_DeprecationWarnings_RecordsDirAndPartition(t *testing.T) {
+	yamlData := `version: 1
+entity: notes
+docs_dir: docs/notes
+filename: "{id}.md"
+id_field: id
+integrity: off
+records_dir: data/notes
+partition: monthly
+date_field: created
+fields:
+  id: { type: string, required: true }
+  created: { type: date, required: true }
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "notes.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(yamlData), 0o644))
+
+	stderr := captureStderr(t, func() {
+		_, err := Load(path)
+		require.NoError(t, err)
+	})
+	assert.Contains(t, stderr, "records_dir")
+	assert.Contains(t, stderr, "partition")
+	assert.Contains(t, stderr, "deprecated")
+}
+
+func TestLoad_NoWarning_WhenFieldsAbsent(t *testing.T) {
+	yamlData := `version: 1
+entity: notes
+docs_dir: docs/notes
+filename: "{id}.md"
+id_field: id
+integrity: off
+fields:
+  id: { type: string, required: true }
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "notes.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(yamlData), 0o644))
+
+	stderr := captureStderr(t, func() {
+		_, err := Load(path)
+		require.NoError(t, err)
+	})
+	assert.Empty(t, stderr)
 }
