@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/sergio-bershadsky/secondbrain-db/compare/v1.3.0...v1.3.1) (2026-04-28)
+
+
+### Bug Fixes
+
+* **version:** resolve via debug.BuildInfo so go-install builds report the right version ([#25](https://github.com/sergio-bershadsky/secondbrain-db/issues/25)) ([8ab59e4](https://github.com/sergio-bershadsky/secondbrain-db/commit/8ab59e46c28744b8fecfb42f96bbffb2e5f4f923)), closes [#24](https://github.com/sergio-bershadsky/secondbrain-db/issues/24)
+
 ## [1.3.0](https://github.com/sergio-bershadsky/secondbrain-db/compare/v1.2.3...v1.3.0) (2026-04-28)
 
 
