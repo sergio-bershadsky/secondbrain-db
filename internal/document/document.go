@@ -53,11 +53,6 @@ func (d *Document) FilePath() string {
 	return filepath.Join(d.BasePath, d.Schema.DocsDir, filename)
 }
 
-// RecordsDir returns the full path to this document's records directory.
-func (d *Document) RecordsDir() string {
-	return filepath.Join(d.BasePath, d.Schema.RecordsDir)
-}
-
 // RelativeFilePath returns the docs-relative path for the records `file` field.
 func (d *Document) RelativeFilePath() string {
 	filename := d.resolveFilename()
