@@ -91,22 +91,16 @@ func TestDocument_CreateAndSave(t *testing.T) {
 	assert.Equal(t, "My Test Note", fm["title"]) // virtual
 	assert.Contains(t, body, "My Test Note")
 
-	// Verify records.yaml
-	records, err := storage.LoadRecords(filepath.Join(basePath, "data", "notes", "records.yaml"))
+	// Verify sidecar exists and has correct content
+	sc, err := integrity.LoadSidecar(mdPath)
 	require.NoError(t, err)
-	require.Len(t, records, 1)
-	assert.Equal(t, "test-note", records[0]["id"])
-	assert.Equal(t, "My Test Note", records[0]["title"])
-	assert.Equal(t, filepath.Join("docs", "notes", "test-note.md"), records[0]["file"])
-	// Tags should NOT be in record (complex field)
-	_, hasTags := records[0]["tags"]
-	assert.False(t, hasTags, "complex fields should not be in records")
+	assert.Equal(t, "test-note.md", sc.File)
+	assert.NotEmpty(t, sc.ContentSHA)
+	assert.NotEmpty(t, sc.FrontmatterSHA)
+	assert.NotEmpty(t, sc.RecordSHA)
 
-	// Verify integrity manifest
-	manifest, err := integrity.LoadManifest(filepath.Join(basePath, "data", "notes"))
-	require.NoError(t, err)
-	require.Contains(t, manifest.Entries, "test-note")
-	assert.NotEmpty(t, manifest.Entries["test-note"].ContentSHA)
+	// records.yaml should NOT be written in sidecar mode
+	assert.NoFileExists(t, filepath.Join(basePath, "data", "notes", "records.yaml"))
 }
 
 func TestDocument_LoadFromFile(t *testing.T) {
@@ -146,15 +140,8 @@ func TestDocument_Delete(t *testing.T) {
 	_, err = os.Stat(mdPath)
 	assert.True(t, os.IsNotExist(err))
 
-	// Verify record removed
-	records, err := storage.LoadRecords(filepath.Join(basePath, "data", "notes", "records.yaml"))
-	require.NoError(t, err)
-	assert.Empty(t, records)
-
-	// Verify manifest entry removed
-	manifest, err := integrity.LoadManifest(filepath.Join(basePath, "data", "notes"))
-	require.NoError(t, err)
-	assert.NotContains(t, manifest.Entries, "delete-me")
+	// Verify sidecar also removed
+	assert.NoFileExists(t, filepath.Join(basePath, "docs", "notes", "delete-me.yaml"))
 }
 
 func TestDocument_SaveIsIdempotent(t *testing.T) {
@@ -167,9 +154,11 @@ func TestDocument_SaveIsIdempotent(t *testing.T) {
 	require.NoError(t, doc.Save(rt))
 	require.NoError(t, doc.Save(rt))
 
-	records, err := storage.LoadRecords(filepath.Join(basePath, "data", "notes", "records.yaml"))
+	// Sidecar should exist exactly once (idempotent overwrite)
+	mdPath := filepath.Join(basePath, "docs", "notes", "idem.md")
+	sc, err := integrity.LoadSidecar(mdPath)
 	require.NoError(t, err)
-	assert.Len(t, records, 1, "save should upsert, not duplicate")
+	assert.NotEmpty(t, sc.ContentSHA, "save should be idempotent")
 }
 
 func TestDocument_VirtualFieldsMaterialized(t *testing.T) {
@@ -186,8 +175,9 @@ func TestDocument_VirtualFieldsMaterialized(t *testing.T) {
 	wc := doc.Virtuals()["word_count"]
 	assert.NotNil(t, wc)
 
-	// Check record has title (scalar virtual) but not word_count if it's also scalar
-	records, err := storage.LoadRecords(filepath.Join(basePath, "data", "notes", "records.yaml"))
+	// Check frontmatter has title (scalar virtual)
+	mdPath := filepath.Join(basePath, "docs", "notes", "v-test.md")
+	fm, _, err := storage.ParseMarkdown(mdPath)
 	require.NoError(t, err)
-	assert.Equal(t, "Virtual Test", records[0]["title"])
+	assert.Equal(t, "Virtual Test", fm["title"])
 }

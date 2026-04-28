@@ -64,27 +64,20 @@ func (d *Document) EnsureLoaded() error {
 	return nil
 }
 
-// VerifyIntegrity checks this document against the integrity manifest.
+// VerifyIntegrity checks this document against its per-doc sidecar.
 // Returns nil if the document passes, or an IntegrityError if tampered.
 func (d *Document) VerifyIntegrity() error {
 	if d.Schema.Integrity == "off" {
 		return nil
 	}
 
-	recordsDir := d.RecordsDir()
-	if !integrity.ManifestExists(recordsDir) {
-		return nil
-	}
-
-	manifest, err := integrity.LoadManifest(recordsDir)
+	mdPath := d.FilePath()
+	sc, err := integrity.LoadSidecar(mdPath)
 	if err != nil {
-		return fmt.Errorf("loading manifest for verification: %w", err)
-	}
-
-	id := d.ID()
-	entry, ok := manifest.Entries[id]
-	if !ok {
-		return nil // no entry = not yet tracked
+		if os.IsNotExist(err) {
+			return nil // no sidecar = not yet tracked
+		}
+		return fmt.Errorf("loading sidecar for verification: %w", err)
 	}
 
 	// Ensure we have content loaded for hashing
@@ -97,41 +90,55 @@ func (d *Document) VerifyIntegrity() error {
 	recordData := schema.BuildRecordData(d.Schema, d.Data, d.virtuals)
 	recordData["file"] = d.RelativeFilePath()
 
-	contentSHA := integrity.HashContent(d.Content)
-	fmSHA := integrity.HashFrontmatter(fmData)
-	recSHA := integrity.HashRecord(recordData)
+	key, err := integrity.LoadKey()
+	if err != nil {
+		return fmt.Errorf("loading integrity key for HMAC verification: %w", err)
+	}
 
-	check := integrity.Verify(entry, contentSHA, fmSHA, recSHA)
-	if check == nil {
-		// Also verify HMAC if manifest says HMAC is enabled
-		if manifest.HMAC && entry.Sig != "" {
-			key, err := integrity.LoadKey()
-			if err != nil {
-				return fmt.Errorf("loading integrity key for HMAC verification: %w", err)
-			}
-			if key != nil && !integrity.VerifySignature(entry, key) {
-				if d.Schema.Integrity == "strict" {
-					return &IntegrityError{
-						ID:         id,
-						File:       d.FilePath(),
-						Mismatched: []string{"hmac"},
-					}
-				}
-			}
-		}
+	drift, _ := sc.Verify(mdPath, fmData, d.Content, recordData, key)
+	if !drift.Any() {
 		return nil
 	}
 
+	id := d.ID()
+
 	if d.Schema.Integrity == "warn" {
+		var mismatched []string
+		if drift.ContentDrift {
+			mismatched = append(mismatched, "content")
+		}
+		if drift.FrontmatterDrift {
+			mismatched = append(mismatched, "frontmatter")
+		}
+		if drift.RecordDrift {
+			mismatched = append(mismatched, "record")
+		}
+		if drift.BadSig {
+			mismatched = append(mismatched, "hmac")
+		}
 		fmt.Fprintf(os.Stderr, "warning: integrity mismatch for %q (%s): %v changed\n",
-			id, d.FilePath(), check.Mismatched)
+			id, d.FilePath(), mismatched)
 		return nil
+	}
+
+	var mismatched []string
+	if drift.ContentDrift {
+		mismatched = append(mismatched, "content")
+	}
+	if drift.FrontmatterDrift {
+		mismatched = append(mismatched, "frontmatter")
+	}
+	if drift.RecordDrift {
+		mismatched = append(mismatched, "record")
+	}
+	if drift.BadSig {
+		mismatched = append(mismatched, "hmac")
 	}
 
 	return &IntegrityError{
 		ID:         id,
 		File:       d.FilePath(),
-		Mismatched: check.Mismatched,
+		Mismatched: mismatched,
 	}
 }
 

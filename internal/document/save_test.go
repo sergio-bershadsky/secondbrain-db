@@ -1,7 +1,6 @@
 package document
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -11,8 +10,7 @@ import (
 	"github.com/sergio-bershadsky/secondbrain-db/internal/integrity"
 )
 
-func TestSave_WritesSidecar_WhenFlagSet(t *testing.T) {
-	t.Setenv("SBDB_USE_SIDECAR", "1")
+func TestSave_WritesSidecar(t *testing.T) {
 	s, rt, basePath := setupTest(t)
 
 	doc := New(s, basePath)
@@ -41,8 +39,7 @@ func TestSave_WritesSidecar_WhenFlagSet(t *testing.T) {
 	assert.NotEmpty(t, sc.RecordSHA)
 }
 
-func TestDelete_RemovesSidecar_WhenFlagSet(t *testing.T) {
-	t.Setenv("SBDB_USE_SIDECAR", "1")
+func TestDelete_RemovesSidecar(t *testing.T) {
 	s, rt, basePath := setupTest(t)
 
 	doc := New(s, basePath)
@@ -58,24 +55,5 @@ func TestDelete_RemovesSidecar_WhenFlagSet(t *testing.T) {
 
 	mdPath := filepath.Join(basePath, "docs/notes/alpha.md")
 	assert.NoFileExists(t, mdPath)
-	assert.NoFileExists(t, filepath.Join(basePath, "docs/notes/alpha.yaml"))
-}
-
-func TestSave_LegacyPath_UnchangedWhenFlagUnset(t *testing.T) {
-	// Sanity: existing aggregate writes still happen with no flag.
-	os.Unsetenv("SBDB_USE_SIDECAR")
-	s, rt, basePath := setupTest(t)
-
-	doc := New(s, basePath)
-	doc.Data = map[string]any{
-		"id":      "alpha",
-		"created": "2026-04-28",
-		"status":  "active",
-	}
-	doc.Content = "# Alpha"
-	require.NoError(t, doc.Save(rt))
-
-	assert.FileExists(t, filepath.Join(basePath, "data/notes/records.yaml"))
-	// No sidecar in legacy mode.
 	assert.NoFileExists(t, filepath.Join(basePath, "docs/notes/alpha.yaml"))
 }

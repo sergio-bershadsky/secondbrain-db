@@ -288,7 +288,7 @@ func TestDocument_PostDeleteHook(t *testing.T) {
 	assert.Equal(t, "del-hook", deletedID)
 }
 
-// Integration: save via ORM, read records, verify consistency
+// Integration: save via ORM, verify sidecar consistency
 func TestDocument_RecordConsistency(t *testing.T) {
 	s, rt, basePath := setupLoadTest(t)
 
@@ -302,22 +302,22 @@ func TestDocument_RecordConsistency(t *testing.T) {
 	doc.Content = "# Consistency Check\n\nBody.\n"
 	require.NoError(t, doc.Save(rt))
 
-	// Read records.yaml
-	records, err := storage.LoadRecords(filepath.Join(basePath, "data", "notes", "records.yaml"))
+	// Sidecar should exist
+	mdPath := filepath.Join(basePath, "docs", "notes", "consistency.md")
+	sc, err := integrity.LoadSidecar(mdPath)
 	require.NoError(t, err)
-	require.Len(t, records, 1)
+	assert.Equal(t, "consistency.md", sc.File)
+	assert.NotEmpty(t, sc.ContentSHA)
+	assert.NotEmpty(t, sc.FrontmatterSHA)
+	assert.NotEmpty(t, sc.RecordSHA)
 
-	rec := records[0]
-	assert.Equal(t, "consistency", rec["id"])
-	assert.Equal(t, "active", rec["status"])
-	assert.Equal(t, "Consistency Check", rec["title"]) // virtual scalar
-	assert.NotNil(t, rec["file"])
+	// Frontmatter should have the title virtual and id
+	fm, _, ferr := storage.ParseMarkdown(mdPath)
+	require.NoError(t, ferr)
+	assert.Equal(t, "consistency", fm["id"])
+	assert.Equal(t, "active", fm["status"])
+	assert.Equal(t, "Consistency Check", fm["title"]) // virtual scalar
 
-	// tags should NOT be in record (complex field)
-	_, hasTags := rec["tags"]
-	assert.False(t, hasTags)
-
-	// Manifest should exist
-	manifest, _ := integrity.LoadManifest(filepath.Join(basePath, "data", "notes"))
-	assert.Contains(t, manifest.Entries, "consistency")
+	// records.yaml should NOT be written
+	assert.NoFileExists(t, filepath.Join(basePath, "data", "notes", "records.yaml"))
 }

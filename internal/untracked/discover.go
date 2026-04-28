@@ -5,15 +5,15 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/sergio-bershadsky/secondbrain-db/internal/integrity"
 	"github.com/sergio-bershadsky/secondbrain-db/internal/schema"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/storage"
 )
 
 // FileClass describes how sbdb classifies a file.
 type FileClass int
 
 const (
-	ClassSchemaManaged FileClass = iota // in a schema's records.yaml
+	ClassSchemaManaged FileClass = iota // has a sidecar under a schema's docs_dir
 	ClassUntracked                      // in data/.untracked.yaml
 	ClassUnregistered                   // exists on disk but not tracked by either
 )
@@ -25,24 +25,15 @@ func ClassifyFile(relPath string, schemas []*schema.Schema, basePath string, reg
 		return ClassUntracked
 	}
 
-	// Check each schema's records
+	// A file is schema-managed if it falls under a schema's docs_dir AND
+	// has a sidecar file next to it.
 	for _, s := range schemas {
 		if !strings.HasPrefix(relPath, s.DocsDir+"/") {
 			continue
 		}
-
-		// Load records for this schema and check if file is there
-		recordsDir := filepath.Join(basePath, s.RecordsDir)
-		records, err := storage.LoadAllPartitions(recordsDir, s.Partition)
-		if err != nil {
-			continue
-		}
-
-		for _, rec := range records {
-			recFile, ok := rec["file"]
-			if ok && recFile == relPath {
-				return ClassSchemaManaged
-			}
+		fullPath := filepath.Join(basePath, relPath)
+		if _, err := os.Stat(integrity.SidecarPath(fullPath)); err == nil {
+			return ClassSchemaManaged
 		}
 	}
 

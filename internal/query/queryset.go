@@ -2,7 +2,6 @@ package query
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -151,11 +150,7 @@ func (qs *QuerySet) Records() ([]map[string]any, error) {
 }
 
 func (qs *QuerySet) loadRecords() ([]map[string]any, error) {
-	if os.Getenv("SBDB_USE_SIDECAR") == "1" {
-		return qs.loadRecordsViaWalker()
-	}
-	recordsDir := filepath.Join(qs.basePath, qs.schema.RecordsDir)
-	return storage.LoadAllPartitions(recordsDir, qs.schema.Partition)
+	return qs.loadRecordsViaWalker()
 }
 
 func (qs *QuerySet) loadRecordsViaWalker() ([]map[string]any, error) {

@@ -1,6 +1,7 @@
 package query
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -9,7 +10,6 @@ import (
 
 	"github.com/sergio-bershadsky/secondbrain-db/internal/document"
 	"github.com/sergio-bershadsky/secondbrain-db/internal/schema"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/storage"
 )
 
 const testSchemaYAML = `
@@ -36,15 +36,30 @@ func setupQueryTest(t *testing.T) (*schema.Schema, string) {
 	require.NoError(t, err)
 
 	basePath := t.TempDir()
-	recordsDir := filepath.Join(basePath, "data", "notes")
+	docsDir := filepath.Join(basePath, "docs", "notes")
+	require.NoError(t, os.MkdirAll(docsDir, 0o755))
 
-	records := []map[string]any{
-		{"id": "a", "created": "2026-01-01", "status": "active", "file": "docs/notes/a.md"},
-		{"id": "b", "created": "2026-02-01", "status": "archived", "file": "docs/notes/b.md"},
-		{"id": "c", "created": "2026-03-01", "status": "active", "file": "docs/notes/c.md"},
-		{"id": "d", "created": "2026-04-01", "status": "active", "file": "docs/notes/d.md"},
+	// Write markdown files with frontmatter so the walker can read them.
+	docFixtures := []struct {
+		id      string
+		created string
+		status  string
+	}{
+		{"a", "2026-01-01", "active"},
+		{"b", "2026-02-01", "archived"},
+		{"c", "2026-03-01", "active"},
+		{"d", "2026-04-01", "active"},
 	}
-	require.NoError(t, storage.SaveRecords(filepath.Join(recordsDir, "records.yaml"), records))
+	for _, f := range docFixtures {
+		doc := document.New(s, basePath)
+		doc.Data = map[string]any{
+			"id":      f.id,
+			"created": f.created,
+			"status":  f.status,
+		}
+		doc.Content = "# " + f.id + "\n"
+		require.NoError(t, doc.Save(nil))
+	}
 
 	return s, basePath
 }
