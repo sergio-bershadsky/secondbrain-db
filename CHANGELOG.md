@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/sergio-bershadsky/secondbrain-db/compare/v1.2.3...v1.3.0) (2026-04-28)
+
+
+### Features
+
+* **cli:** support \`sbdb --version\` flag ([#22](https://github.com/sergio-bershadsky/secondbrain-db/issues/22)) ([cfbbf34](https://github.com/sergio-bershadsky/secondbrain-db/commit/cfbbf3453273edb40b7b7423da3e768111d21858)), closes [#21](https://github.com/sergio-bershadsky/secondbrain-db/issues/21)
+
 ## [1.2.3](https://github.com/sergio-bershadsky/secondbrain-db/compare/v1.2.2...v1.2.3) (2026-04-28)
 
 
