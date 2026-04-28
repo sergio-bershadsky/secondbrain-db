@@ -51,7 +51,7 @@ Or download from [GitHub Releases](https://github.com/sergio-bershadsky/secondbr
 
 ```bash
 # Initialize a project
-sbdb init --template notes
+sbdb init
 
 # Create a document
 echo '{"id":"hello","created":"2026-04-08","status":"active","content":"# Hello World\n\nMy first note."}' | sbdb create -s notes --input -
@@ -104,7 +104,9 @@ virtuals:
 
 ## Tutorial: building a custom schema from scratch
 
-`sbdb` ships with three built-in templates (`notes`, `blog`, `adr`), but the real power is defining your own schemas for any entity type you need. This tutorial walks through creating a **recipe book** knowledge base end-to-end.
+The real power of `sbdb` is defining your own schemas for any entity type you need. This tutorial walks through creating a **recipe book** knowledge base end-to-end.
+
+Reference schemas for common entity types (notes, ADRs, discussions, tasks, blog posts) are available in the secondbrain-db Claude Code plugin under `skills/secondbrain-db/reference/schemas/` — copy one to get started quickly, or write your own from scratch.
 
 ### Step 1: Initialize a project
 
@@ -112,7 +114,7 @@ Start with a fresh directory. `sbdb init` creates the folder structure and a sta
 
 ```bash
 mkdir my-recipes && cd my-recipes
-sbdb init --template notes
+sbdb init
 ```
 
 This creates:
@@ -120,10 +122,8 @@ This creates:
 ```
 my-recipes/
 ├── .sbdb.toml          # project config
-├── schemas/
-│   └── notes.yaml      # default schema (we'll replace this)
-├── docs/               # markdown files live here
-└── data/               # records + integrity manifests live here
+├── schemas/            # add your schema YAML files here
+└── docs/               # markdown files live here
 ```
 
 ### Step 2: Design your schema
@@ -276,17 +276,16 @@ sbdb create \
   --content-file pasta-aglio.md
 ```
 
-After creating, `sbdb` writes two files:
+After creating, `sbdb` writes two files side by side in `docs/recipes/`:
 
 ```
 docs/recipes/pad-thai.md     ← markdown with YAML frontmatter + body
-data/recipes/records.yaml    ← flat scalar projection (fast queries)
-data/recipes/.integrity.yaml ← SHA-256 hashes for tamper detection
+docs/recipes/pad-thai.yaml   ← sidecar: scalar projection + integrity manifest
 ```
 
 ### Step 7: Query your data
 
-Queries hit `records.yaml` only — no file I/O per record, fast even for thousands of documents.
+Queries hit the sidecar `.yaml` files only — no file I/O per record, fast even for thousands of documents.
 
 ```bash
 # All recipes
@@ -766,8 +765,8 @@ sbdb layers on top of existing markdown tools — it doesn't replace them. Your 
 Best for: ADRs, meeting notes, incident reports — anything with a repeatable structure.
 
 ```bash
-sbdb init --template notes    # creates schemas/ + .sbdb.toml
-sbdb create --input -         # create via CLI, writes .md + records.yaml
+sbdb init                     # creates schemas/ + .sbdb.toml (bare scaffold)
+sbdb create --input -         # create via CLI, writes .md + sidecar .yaml
 sbdb query --filter ...       # fast structured queries
 ```
 

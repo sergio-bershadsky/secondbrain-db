@@ -32,18 +32,16 @@ sbdb version
 
 ```bash
 mkdir my-kb && cd my-kb
-sbdb init --template notes
+sbdb init
 ```
 
-This creates:
+This creates a bare scaffold — just the directories and a config file. Add schemas yourself or copy reference schemas from the secondbrain-db Claude Code plugin (`skills/secondbrain-db/reference/schemas/`).
 
 ```
 my-kb/
-├── .sbdb.toml          # config: default schema, output format, integrity settings
-├── schemas/
-│   └── notes.yaml      # your first schema
-├── docs/               # markdown files will live here
-└── data/               # records + integrity manifests
+├── .sbdb.toml          # config: schema dir, output format, integrity settings
+├── schemas/            # add your schema YAML files here
+└── docs/               # markdown files will live here
 ```
 
 ### Project config (.sbdb.toml)
@@ -51,7 +49,6 @@ my-kb/
 ```toml
 schema_dir = "./schemas"
 base_path = "."
-default_schema = "notes"
 
 [output]
 format = "auto"          # "auto" = table on TTY, json when piped
@@ -218,7 +215,7 @@ sbdb doctor init-key
 On every `save()`, sbdb:
 1. Computes SHA-256 of the content, frontmatter, and record
 2. Signs with HMAC (if key exists)
-3. Stores in `data/<entity>/.integrity.yaml`
+3. Stores the hash in the sidecar `<id>.yaml` alongside the markdown file
 
 On every `get`/`query`, sbdb verifies the hashes match.
 
@@ -230,7 +227,7 @@ sbdb doctor check
 
 Exit codes:
 - `0` — clean
-- `4` — **drift**: frontmatter and records.yaml are out of sync
+- `4` — **drift**: frontmatter and sidecar record are out of sync
 - `6` — **tamper**: a file was modified outside sbdb
 - `7` — both
 
@@ -422,18 +419,13 @@ my-kb/
 ├── docs/
 │   ├── notes/
 │   │   ├── deploy-guide.md         # ← markdown + frontmatter
-│   │   └── arch-overview.md
+│   │   ├── deploy-guide.yaml       # ← sidecar: scalar projection + integrity hash
+│   │   ├── arch-overview.md
+│   │   └── arch-overview.yaml
 │   └── meetings/
 │       ├── 2026-04-08-standup.md
-│       └── 2026-04-10-retro.md
-├── data/
-│   ├── notes/
-│   │   ├── records.yaml            # ← scalar projections (fast queries)
-│   │   └── .integrity.yaml         # ← SHA-256 hashes
-│   ├── meetings/
-│   │   ├── 2026-04.yaml            # ← monthly partition
-│   │   └── .integrity.yaml
-│   ├── .sbdb.db                    # ← SQLite: semantic search vectors
-│   └── .sbdb-graph.db              # ← bbolt: knowledge graph
+│       ├── 2026-04-08-standup.yaml
+│       ├── 2026-04-10-retro.md
+│       └── 2026-04-10-retro.yaml
 └── .gitignore
 ```
