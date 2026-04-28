@@ -7,37 +7,21 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
-func TestRecordsPathForPartition_None(t *testing.T) {
-	path, err := RecordsPathForPartition(filepath.Join("data", "notes"), "none", "", nil)
+// writeRecords is a test helper that serialises records to a YAML file.
+func writeRecords(t *testing.T, path string, records []map[string]any) {
+	t.Helper()
+	data, err := yaml.Marshal(records)
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join("data", "notes", "records.yaml"), path)
-}
-
-func TestRecordsPathForPartition_Monthly(t *testing.T) {
-	record := map[string]any{"date": "2026-04-08"}
-	path, err := RecordsPathForPartition(filepath.Join("data", "meetings"), "monthly", "date", record)
-	require.NoError(t, err)
-	assert.Equal(t, filepath.Join("data", "meetings", "2026-04.yaml"), path)
-}
-
-func TestRecordsPathForPartition_MissingDateField(t *testing.T) {
-	_, err := RecordsPathForPartition("/data", "monthly", "date", map[string]any{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "missing date field")
-}
-
-func TestRecordsPathForPartition_UnknownMode(t *testing.T) {
-	_, err := RecordsPathForPartition("/data", "weekly", "", nil)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "unknown partition")
+	require.NoError(t, os.WriteFile(path, data, 0o644))
 }
 
 func TestLoadAllPartitions_None(t *testing.T) {
 	dir := t.TempDir()
 	records := []map[string]any{{"id": "a"}, {"id": "b"}}
-	require.NoError(t, SaveRecords(filepath.Join(dir, "records.yaml"), records))
+	writeRecords(t, filepath.Join(dir, "records.yaml"), records)
 
 	loaded, err := LoadAllPartitions(dir, "none")
 	require.NoError(t, err)
@@ -49,8 +33,8 @@ func TestLoadAllPartitions_Monthly(t *testing.T) {
 
 	jan := []map[string]any{{"id": "jan-1"}, {"id": "jan-2"}}
 	feb := []map[string]any{{"id": "feb-1"}}
-	require.NoError(t, SaveRecords(filepath.Join(dir, "2026-01.yaml"), jan))
-	require.NoError(t, SaveRecords(filepath.Join(dir, "2026-02.yaml"), feb))
+	writeRecords(t, filepath.Join(dir, "2026-01.yaml"), jan)
+	writeRecords(t, filepath.Join(dir, "2026-02.yaml"), feb)
 
 	// Also a non-partition file that should be ignored
 	os.WriteFile(filepath.Join(dir, "notes.yaml"), []byte("ignored"), 0o644)

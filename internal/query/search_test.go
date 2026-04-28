@@ -7,9 +7,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 
 	"github.com/sergio-bershadsky/secondbrain-db/internal/schema"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/storage"
 )
 
 func setupSearchTest(t *testing.T) (*schema.Schema, string) {
@@ -36,7 +36,9 @@ func setupSearchTest(t *testing.T) (*schema.Schema, string) {
 		{"id": "b", "created": "2026-02-01", "status": "active", "file": "docs/notes/b.md"},
 		{"id": "c", "created": "2026-03-01", "status": "active", "file": "docs/notes/c.md"},
 	}
-	require.NoError(t, storage.SaveRecords(filepath.Join(recordsDir, "records.yaml"), records))
+	data, err := yaml.Marshal(records)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(recordsDir, "records.yaml"), data, 0o644))
 
 	return s, basePath
 }

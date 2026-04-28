@@ -10,52 +10,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestManifest_SaveAndLoad(t *testing.T) {
-	dir := t.TempDir()
-
-	m := &Manifest{
-		Version: 1,
-		Algo:    "sha256",
-		Entries: map[string]*Entry{
-			"note-1": {
-				File:           "docs/notes/note-1.md",
-				ContentSHA:     "abc123",
-				FrontmatterSHA: "def456",
-				RecordSHA:      "ghi789",
-			},
-		},
-	}
-
-	require.NoError(t, m.Save(dir))
-
-	loaded, err := LoadManifest(dir)
-	require.NoError(t, err)
-	require.Len(t, loaded.Entries, 1)
-	assert.Equal(t, "abc123", loaded.Entries["note-1"].ContentSHA)
-	assert.Equal(t, "sha256", loaded.Algo)
-}
-
 func TestManifest_LoadNonExistent(t *testing.T) {
 	m, err := LoadManifest("/nonexistent/path")
 	require.NoError(t, err)
 	assert.Empty(t, m.Entries)
 	assert.Equal(t, "sha256", m.Algo)
-}
-
-func TestManifest_SetAndRemoveEntry(t *testing.T) {
-	m := &Manifest{
-		Version: 1,
-		Algo:    "sha256",
-		Entries: make(map[string]*Entry),
-	}
-
-	m.SetEntry("a", &Entry{ContentSHA: "hash_a"})
-	m.SetEntry("b", &Entry{ContentSHA: "hash_b"})
-	assert.Len(t, m.Entries, 2)
-
-	m.RemoveEntry("a")
-	assert.Len(t, m.Entries, 1)
-	assert.Contains(t, m.Entries, "b")
 }
 
 func TestVerify_Match(t *testing.T) {
