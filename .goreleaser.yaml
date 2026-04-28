@@ -6,7 +6,11 @@ builds:
     env:
       - CGO_ENABLED=0
     ldflags:
-      - -s -w -X github.com/sergio-bershadsky/secondbrain-db/internal/version.Version={{.Version}}
+      # injected (lower-case) is the new entry point in internal/version;
+      # see the package doc for the resolution chain. The previous .Version
+      # symbol still exists for backward-compat readers but is no longer the
+      # write target.
+      - -s -w -X github.com/sergio-bershadsky/secondbrain-db/internal/version.injected={{.Version}}
     goos:
       - linux
       - darwin
