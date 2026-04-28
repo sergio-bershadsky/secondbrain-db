@@ -120,3 +120,23 @@ func loadRuntime(s *schema.Schema) (*virtuals.Runtime, error) {
 func outputFormat(cfg *config.Config) string {
 	return config.ResolveFormat(cfg.Output.Format)
 }
+
+// loadAllSchemas returns every schema found in cfg.SchemaDir.
+func loadAllSchemas(cfg *config.Config) ([]*schema.Schema, error) {
+	entries, err := os.ReadDir(cfg.SchemaDir)
+	if err != nil {
+		return nil, fmt.Errorf("reading schema dir: %w", err)
+	}
+	var out []*schema.Schema
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".yaml" {
+			continue
+		}
+		s, err := schema.Load(filepath.Join(cfg.SchemaDir, e.Name()))
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", e.Name(), err)
+		}
+		out = append(out, s)
+	}
+	return out, nil
+}

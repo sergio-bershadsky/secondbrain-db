@@ -54,6 +54,14 @@ var doctorInitKeyCmd = &cobra.Command{
 	RunE:  runDoctorInitKey,
 }
 
+var doctorMigrateDryRun bool
+
+var doctorMigrateCmd = &cobra.Command{
+	Use:   "migrate",
+	Short: "Migrate v1 (data/) layout to v2 (per-md sidecars)",
+	RunE:  runDoctorMigrate,
+}
+
 var (
 	doctorFixRecompute bool
 	doctorSignForce    bool
@@ -67,6 +75,8 @@ func init() {
 	doctorCmd.AddCommand(doctorSignCmd)
 	doctorCmd.AddCommand(doctorStatusCmd)
 	doctorCmd.AddCommand(doctorInitKeyCmd)
+	doctorMigrateCmd.Flags().BoolVar(&doctorMigrateDryRun, "dry-run", false, "report planned changes without writing")
+	doctorCmd.AddCommand(doctorMigrateCmd)
 
 	doctorFixCmd.Flags().BoolVar(&doctorFixRecompute, "recompute", false, "recompute virtual fields")
 	doctorSignCmd.Flags().BoolVar(&doctorSignForce, "force", false, "overwrite existing entries")
@@ -591,6 +601,104 @@ func writeSidecarFromMD(s *schemapkg.Schema, basePath, mdPath string, key []byte
 		return fmt.Errorf("sign requires an HMAC key")
 	}
 	return sc.Save(mdPath)
+}
+
+func runDoctorMigrate(cmd *cobra.Command, _ []string) error {
+	cfg, err := resolveConfig()
+	if err != nil {
+		return err
+	}
+
+	dataDir := filepath.Join(cfg.BasePath, "data")
+	if _, err := os.Stat(dataDir); os.IsNotExist(err) {
+		return output.PrintData(outputFormat(cfg), map[string]any{
+			"action": "doctor.migrate",
+			"result": "already-v2",
+		})
+	}
+
+	schemas, err := loadAllSchemas(cfg)
+	if err != nil {
+		return err
+	}
+
+	migrated := 0
+	for _, s := range schemas {
+		if s.RecordsDir == "" {
+			continue
+		}
+		recordsDir := filepath.Join(cfg.BasePath, s.RecordsDir)
+		if _, err := os.Stat(recordsDir); os.IsNotExist(err) {
+			continue
+		}
+
+		records, err := storage.LoadAllPartitions(recordsDir, s.Partition)
+		if err != nil {
+			return fmt.Errorf("loading legacy records for %s: %w", s.Entity, err)
+		}
+		manifest, mErr := integrity.LoadManifest(recordsDir)
+		if mErr != nil {
+			return fmt.Errorf("loading legacy manifest for %s: %w", s.Entity, mErr)
+		}
+
+		for _, rec := range records {
+			id := fmt.Sprintf("%v", rec[s.IDField])
+			file, _ := rec["file"].(string)
+			if file == "" {
+				continue
+			}
+			mdPath := filepath.Join(cfg.BasePath, file)
+			entry := manifest.Entries[id]
+			sc := buildSidecarFromV1(rec, entry, mdPath)
+			if doctorMigrateDryRun {
+				continue
+			}
+			if err := sc.Save(mdPath); err != nil {
+				return fmt.Errorf("writing sidecar for %s: %w", id, err)
+			}
+			migrated++
+		}
+	}
+
+	if !doctorMigrateDryRun {
+		if err := os.RemoveAll(dataDir); err != nil {
+			return fmt.Errorf("removing legacy data/: %w", err)
+		}
+	}
+
+	return output.PrintData(outputFormat(cfg), map[string]any{
+		"action":   "doctor.migrate",
+		"migrated": migrated,
+		"dry_run":  doctorMigrateDryRun,
+	})
+}
+
+// buildSidecarFromV1 converts a legacy records.yaml + manifest entry to a
+// v2 per-doc Sidecar. If the manifest has no entry for this id, the sidecar
+// is rebuilt by recomputing hashes from the on-disk markdown.
+func buildSidecarFromV1(rec map[string]any, entry *integrity.Entry, mdPath string) *integrity.Sidecar {
+	sc := &integrity.Sidecar{
+		Version: 1, Algo: "sha256",
+		File: filepath.Base(mdPath),
+	}
+	if entry != nil {
+		sc.ContentSHA = entry.ContentSHA
+		sc.FrontmatterSHA = entry.FrontmatterSHA
+		sc.RecordSHA = entry.RecordSHA
+		sc.Sig = entry.Sig
+		sc.HMAC = entry.Sig != ""
+		sc.UpdatedAt = entry.UpdatedAt
+		sc.Writer = entry.Writer
+		return sc
+	}
+	// Rebuild from disk if no manifest entry.
+	fm, body, err := storage.ParseMarkdown(mdPath)
+	if err == nil {
+		sc.ContentSHA = integrity.HashContent(body)
+		sc.FrontmatterSHA = integrity.HashFrontmatter(fm)
+		sc.RecordSHA = integrity.HashRecord(rec)
+	}
+	return sc
 }
 
 func runDoctorStatus(cmd *cobra.Command, _ []string) error {

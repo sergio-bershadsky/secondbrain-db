@@ -121,3 +121,56 @@ func TestDoctorSign_SidecarMode_RequiresKey(t *testing.T) {
 	require.NotEqual(t, 0, code, "sign without key should fail")
 	assert.Contains(t, out, "key")
 }
+
+func setupV1KB(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	schemaYAML := `version: 1
+entity: notes
+docs_dir: docs/notes
+filename: "{id}.md"
+records_dir: data/notes
+id_field: id
+integrity: off
+fields:
+  id: { type: string, required: true }
+  created: { type: date, required: true }
+`
+	tomlContent := `schema_dir = "./schemas"
+base_path = "."
+[output]
+format = "json"
+[integrity]
+key_source = "env"
+`
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "schemas"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "docs/notes"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "data/notes"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "schemas/notes.yaml"), []byte(schemaYAML), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".sbdb.toml"), []byte(tomlContent), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "docs/notes/alpha.md"),
+		[]byte("---\nid: alpha\ncreated: 2026-04-28\n---\n# Alpha"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "data/notes/records.yaml"), []byte(`- id: alpha
+  created: 2026-04-28
+  file: docs/notes/alpha.md
+`), 0o644))
+	return dir
+}
+
+func TestDoctorMigrate_ConvertsV1ToV2(t *testing.T) {
+	dir := setupV1KB(t)
+	out, code := runCLI(t, dir, nil, "doctor", "migrate")
+	require.Equal(t, 0, code, "migrate failed: %s", out)
+
+	assert.NoDirExists(t, filepath.Join(dir, "data"))
+	assert.FileExists(t, filepath.Join(dir, "docs/notes/alpha.yaml"))
+
+	// Idempotent
+	_, code = runCLI(t, dir, nil, "doctor", "migrate")
+	assert.Equal(t, 0, code, "second migrate should be no-op")
+
+	// doctor check (v2 mode) is clean
+	_, code = runCLI(t, dir, []string{"SBDB_USE_SIDECAR=1"},
+		"doctor", "check", "--all", "-s", "notes")
+	assert.Equal(t, 0, code, "post-migrate doctor check should be clean")
+}
