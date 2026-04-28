@@ -9,6 +9,7 @@ import (
 
 	"github.com/sergio-bershadsky/secondbrain-db/internal/config"
 	"github.com/sergio-bershadsky/secondbrain-db/internal/schema"
+	"github.com/sergio-bershadsky/secondbrain-db/internal/version"
 	"github.com/sergio-bershadsky/secondbrain-db/internal/virtuals"
 )
 
@@ -30,6 +31,9 @@ var rootCmd = &cobra.Command{
 Starlark virtual fields, and integrity signing.
 
 Every operation is available as a machine-readable JSON API for AI agents.`,
+	Version: version.Version,
+	// Match the `sbdb version` subcommand output exactly so users see the
+	// same string regardless of which form they use.
 	SilenceUsage:  true,
 	SilenceErrors: true,
 }
@@ -43,6 +47,11 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&flagVerbose, "verbose", false, "increase logging")
 	rootCmd.PersistentFlags().BoolVar(&flagDryRun, "dry-run", false, "show what would change without writing")
 	rootCmd.PersistentFlags().StringVar(&flagConfig, "config", "", "config file path (default: .sbdb.toml)")
+
+	// Match the `sbdb version` subcommand output: just `sbdb <ver>` on its
+	// own line. Cobra's default would prefix with `sbdb version `, which
+	// would leave the flag and the subcommand printing different strings.
+	rootCmd.SetVersionTemplate("sbdb {{.Version}}\n")
 }
 
 // Execute runs the root command.
