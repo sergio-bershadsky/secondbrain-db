@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -57,6 +58,7 @@ var (
 	doctorFixRecompute bool
 	doctorSignForce    bool
 	doctorSignID       string
+	doctorAll          bool
 )
 
 func init() {
@@ -69,11 +71,15 @@ func init() {
 	doctorFixCmd.Flags().BoolVar(&doctorFixRecompute, "recompute", false, "recompute virtual fields")
 	doctorSignCmd.Flags().BoolVar(&doctorSignForce, "force", false, "overwrite existing entries")
 	doctorSignCmd.Flags().StringVar(&doctorSignID, "id", "", "sign a specific document (default: all)")
+	doctorCheckCmd.Flags().BoolVar(&doctorAll, "all", false, "audit all docs, not just uncommitted changes")
 
 	rootCmd.AddCommand(doctorCmd)
 }
 
-func runDoctorCheck(cmd *cobra.Command, _ []string) error {
+func runDoctorCheck(cmd *cobra.Command, args []string) error {
+	if os.Getenv("SBDB_USE_SIDECAR") == "1" {
+		return runDoctorCheckV2(cmd, args)
+	}
 	cfg, err := resolveConfig()
 	if err != nil {
 		return err
@@ -172,6 +178,145 @@ func runDoctorCheck(cmd *cobra.Command, _ []string) error {
 	}
 
 	return nil
+}
+
+func runDoctorCheckV2(cmd *cobra.Command, _ []string) error {
+	cfg, err := resolveConfig()
+	if err != nil {
+		return err
+	}
+	s, err := loadSchema(cfg)
+	if err != nil {
+		return err
+	}
+	docsDir := filepath.Join(cfg.BasePath, s.DocsDir)
+
+	paths, err := scopedDocPaths(cfg.BasePath, docsDir, doctorAll)
+	if err != nil {
+		return err
+	}
+
+	key, _ := integrity.LoadKey()
+	var drifts []map[string]any
+	for _, mdPath := range paths {
+		if report := checkOneDoc(s, cfg.BasePath, mdPath, key); report != nil {
+			drifts = append(drifts, report)
+		}
+	}
+
+	format := outputFormat(cfg)
+	_ = output.PrintData(format, map[string]any{
+		"action": "doctor.check",
+		"scope":  scopeLabel(doctorAll),
+		"drifts": drifts,
+	})
+	if len(drifts) > 0 {
+		os.Exit(1)
+	}
+	return nil
+}
+
+func scopedDocPaths(basePath, docsDir string, all bool) ([]string, error) {
+	if all {
+		return collectMDsFromWalker(docsDir)
+	}
+	scope, err := integrity.NewGitScope(basePath)
+	if err != nil {
+		return nil, err
+	}
+	if !scope.IsRepo {
+		fmt.Fprintln(os.Stderr, "not a git repo; falling back to --all")
+		return collectMDsFromWalker(docsDir)
+	}
+	var out []string
+	for _, p := range scope.PairScopedPaths() {
+		if !strings.HasSuffix(p, ".md") {
+			continue
+		}
+		if !strings.HasPrefix(p, docsDir+string(filepath.Separator)) && p != docsDir {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+func collectMDsFromWalker(docsDir string) ([]string, error) {
+	docs, err := storage.WalkDocsToSlice(docsDir)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(docs))
+	for _, d := range docs {
+		out = append(out, d.Path)
+	}
+	return out, nil
+}
+
+func scopeLabel(all bool) string {
+	if all {
+		return "all"
+	}
+	return "uncommitted"
+}
+
+func checkOneDoc(s *schemapkg.Schema, basePath, mdPath string, key []byte) map[string]any {
+	mdExists := fileExists(mdPath)
+	sc, err := integrity.LoadSidecar(mdPath)
+	switch {
+	case !mdExists && err == nil:
+		return map[string]any{"file": relPath(basePath, mdPath), "drift": "missing-md"}
+	case mdExists && os.IsNotExist(err):
+		return map[string]any{"file": relPath(basePath, mdPath), "drift": "missing-sidecar"}
+	case err != nil && !os.IsNotExist(err):
+		return map[string]any{"file": relPath(basePath, mdPath), "drift": "sidecar-parse-error", "error": err.Error()}
+	case err != nil:
+		// covered above; safety
+		return nil
+	}
+
+	fm, body, perr := storage.ParseMarkdown(mdPath)
+	if perr != nil {
+		return map[string]any{"file": relPath(basePath, mdPath), "drift": "md-parse-error", "error": perr.Error()}
+	}
+	rec := schemapkg.BuildRecordData(s, fm, nil)
+	if rel, e := filepath.Rel(basePath, mdPath); e == nil {
+		rec["file"] = rel
+	}
+	d, _ := sc.Verify(mdPath, fm, body, rec, key)
+	if !d.Any() {
+		return nil
+	}
+	causes := []string{}
+	if d.ContentDrift {
+		causes = append(causes, "content_sha mismatch")
+	}
+	if d.FrontmatterDrift {
+		causes = append(causes, "frontmatter_sha mismatch")
+	}
+	if d.RecordDrift {
+		causes = append(causes, "record_sha mismatch")
+	}
+	if d.BadSig {
+		causes = append(causes, "bad_sig")
+	}
+	return map[string]any{
+		"file":   relPath(basePath, mdPath),
+		"drift":  "tamper",
+		"causes": causes,
+	}
+}
+
+func relPath(base, path string) string {
+	if rel, err := filepath.Rel(base, path); err == nil {
+		return rel
+	}
+	return path
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
 }
 
 func checkDrift(s *schemapkg.Schema, doc *document.Document) []map[string]any {
