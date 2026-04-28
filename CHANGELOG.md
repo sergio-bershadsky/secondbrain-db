@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.3](https://github.com/sergio-bershadsky/secondbrain-db/compare/v1.2.2...v1.2.3) (2026-04-28)
+
+
+### Miscellaneous Chores
+
+* release as 1.2.3 ([a4d0b46](https://github.com/sergio-bershadsky/secondbrain-db/commit/a4d0b468e6c016bf3c9c94586a23a9900b5f0678))
+
 ## [1.2.2](https://github.com/sergio-bershadsky/secondbrain-db/compare/v1.2.1...v1.2.2) (2026-04-28)
 
 
