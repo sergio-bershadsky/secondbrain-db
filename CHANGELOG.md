@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/sergio-bershadsky/secondbrain-db/compare/v1.2.0...v1.2.1) (2026-04-28)
+
+
+### Miscellaneous Chores
+
+* release as 1.2.1 ([0529357](https://github.com/sergio-bershadsky/secondbrain-db/commit/0529357214428230fd60bcc185fe8e9b7c9d5b94))
+
 ## [1.2.0](https://github.com/sergio-bershadsky/secondbrain-db/compare/v1.1.1...v1.2.0) (2026-04-27)
 
 
