@@ -108,6 +108,55 @@ func TestSidecar_AtomicWrite(t *testing.T) {
 	}
 }
 
+func TestSidecar_Verify_FrontmatterDrift(t *testing.T) {
+	mdPath := filepath.Join(t.TempDir(), "x.md")
+	require.NoError(t, os.WriteFile(mdPath, []byte("# x"), 0o644))
+	sc := &Sidecar{
+		Version: 1, Algo: "sha256", File: "x.md",
+		ContentSHA:     HashContent("body"),
+		FrontmatterSHA: HashFrontmatter(map[string]any{"id": "alpha"}),
+		RecordSHA:      HashRecord(map[string]any{}),
+	}
+	d, err := sc.Verify(mdPath, map[string]any{"id": "tampered"}, "body", map[string]any{}, nil)
+	require.NoError(t, err)
+	assert.True(t, d.FrontmatterDrift)
+	assert.False(t, d.ContentDrift)
+}
+
+func TestSidecar_Verify_RecordDrift(t *testing.T) {
+	mdPath := filepath.Join(t.TempDir(), "x.md")
+	require.NoError(t, os.WriteFile(mdPath, []byte("# x"), 0o644))
+	sc := &Sidecar{
+		Version: 1, Algo: "sha256", File: "x.md",
+		ContentSHA:     HashContent("body"),
+		FrontmatterSHA: HashFrontmatter(map[string]any{}),
+		RecordSHA:      HashRecord(map[string]any{"a": 1}),
+	}
+	d, err := sc.Verify(mdPath, map[string]any{}, "body", map[string]any{"a": 2}, nil)
+	require.NoError(t, err)
+	assert.True(t, d.RecordDrift)
+}
+
+func TestSidecar_Verify_BadSig(t *testing.T) {
+	mdPath := filepath.Join(t.TempDir(), "x.md")
+	require.NoError(t, os.WriteFile(mdPath, []byte("# x"), 0o644))
+	sc := &Sidecar{
+		Version: 1, Algo: "sha256", HMAC: true, File: "x.md",
+		ContentSHA:     HashContent("body"),
+		FrontmatterSHA: HashFrontmatter(map[string]any{}),
+		RecordSHA:      HashRecord(map[string]any{}),
+		Sig:            "deadbeefnotvalid",
+	}
+	d, err := sc.Verify(mdPath, map[string]any{}, "body", map[string]any{}, []byte("any-key"))
+	require.NoError(t, err)
+	assert.True(t, d.BadSig)
+}
+
+func TestSidecar_VerifyWith_EmptySig_ReturnsFalse(t *testing.T) {
+	sc := &Sidecar{Sig: ""}
+	assert.False(t, sc.VerifyWith([]byte("any-key")))
+}
+
 func TestSidecar_YAMLLayoutStable(t *testing.T) {
 	sc := &Sidecar{
 		Version: 1, Algo: "sha256", HMAC: true, File: "hello.md",

@@ -10,6 +10,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/sergio-bershadsky/secondbrain-db/internal/integrity"
+	schemapkg "github.com/sergio-bershadsky/secondbrain-db/internal/schema"
+	"github.com/sergio-bershadsky/secondbrain-db/internal/storage"
 )
 
 var (
@@ -155,6 +159,108 @@ key_source = "env"
   file: docs/notes/alpha.md
 `), 0o644))
 	return dir
+}
+
+func TestScopedDocPaths_AllFlag_WalksEverything(t *testing.T) {
+	dir := t.TempDir()
+	docs := filepath.Join(dir, "docs/notes")
+	require.NoError(t, os.MkdirAll(docs, 0o755))
+	for _, id := range []string{"a", "b", "c"} {
+		require.NoError(t, os.WriteFile(filepath.Join(docs, id+".md"),
+			[]byte("---\nid: "+id+"\n---\n"), 0o644))
+	}
+
+	paths, err := scopedDocPaths(dir, docs, true)
+	require.NoError(t, err)
+	assert.Len(t, paths, 3)
+}
+
+func TestScopedDocPaths_NonGit_FallsBackToWalker(t *testing.T) {
+	dir := t.TempDir()
+	docs := filepath.Join(dir, "docs/notes")
+	require.NoError(t, os.MkdirAll(docs, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(docs, "a.md"),
+		[]byte("---\nid: a\n---\n"), 0o644))
+
+	paths, err := scopedDocPaths(dir, docs, false)
+	require.NoError(t, err)
+	assert.Len(t, paths, 1)
+}
+
+func TestCheckOneDoc_MissingSidecar(t *testing.T) {
+	dir := t.TempDir()
+	mdPath := filepath.Join(dir, "x.md")
+	require.NoError(t, os.WriteFile(mdPath, []byte("---\nid: x\n---\n"), 0o644))
+
+	s, err := schemapkg.Parse([]byte(`version: 1
+entity: notes
+docs_dir: .
+filename: "{id}.md"
+id_field: id
+integrity: off
+fields:
+  id: { type: string, required: true }
+`))
+	require.NoError(t, err)
+
+	report := checkOneDoc(s, dir, mdPath, nil)
+	require.NotNil(t, report)
+	assert.Equal(t, "missing-sidecar", report["drift"])
+}
+
+func TestCheckOneDoc_MissingMD(t *testing.T) {
+	dir := t.TempDir()
+	mdPath := filepath.Join(dir, "x.md")
+	// Sidecar exists, .md does not
+	sc := &integrity.Sidecar{Version: 1, Algo: "sha256", File: "x.md"}
+	require.NoError(t, sc.Save(mdPath))
+
+	s, _ := schemapkg.Parse([]byte(`version: 1
+entity: notes
+docs_dir: .
+filename: "{id}.md"
+id_field: id
+integrity: off
+fields:
+  id: { type: string, required: true }
+`))
+
+	report := checkOneDoc(s, dir, mdPath, nil)
+	require.NotNil(t, report)
+	assert.Equal(t, "missing-md", report["drift"])
+}
+
+func TestCheckOneDoc_Clean_ReturnsNil(t *testing.T) {
+	dir := t.TempDir()
+	mdPath := filepath.Join(dir, "x.md")
+	body := "---\nid: x\n---\nbody"
+	require.NoError(t, os.WriteFile(mdPath, []byte(body), 0o644))
+
+	s, _ := schemapkg.Parse([]byte(`version: 1
+entity: notes
+docs_dir: .
+filename: "{id}.md"
+id_field: id
+integrity: off
+fields:
+  id: { type: string, required: true }
+`))
+
+	// Build a sidecar that matches the on-disk content.
+	fm, body2, err := storage.ParseMarkdown(mdPath)
+	require.NoError(t, err)
+	rec := schemapkg.BuildRecordData(s, fm, nil)
+	rec["file"] = "x.md"
+	sc := &integrity.Sidecar{
+		Version: 1, Algo: "sha256", File: "x.md",
+		ContentSHA:     integrity.HashContent(body2),
+		FrontmatterSHA: integrity.HashFrontmatter(fm),
+		RecordSHA:      integrity.HashRecord(rec),
+	}
+	require.NoError(t, sc.Save(mdPath))
+
+	report := checkOneDoc(s, dir, mdPath, nil)
+	assert.Nil(t, report, "clean doc should produce no drift report")
 }
 
 func TestDoctorMigrate_ConvertsV1ToV2(t *testing.T) {

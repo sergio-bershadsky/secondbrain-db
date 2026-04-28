@@ -51,3 +51,55 @@ func TestQuerySet_Records_SidecarMode_WalksMD(t *testing.T) {
 	}
 	assert.ElementsMatch(t, []string{"alpha", "beta"}, ids)
 }
+
+func TestQuerySet_SidecarMode_FilterAndOrder(t *testing.T) {
+	basePath := t.TempDir()
+	docs := filepath.Join(basePath, "docs/notes")
+	require.NoError(t, os.MkdirAll(docs, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(docs, "alpha.md"),
+		[]byte("---\nid: alpha\nstatus: active\ncreated: 2026-04-28\n---\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(docs, "beta.md"),
+		[]byte("---\nid: beta\nstatus: archived\ncreated: 2026-04-29\n---\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(docs, "gamma.md"),
+		[]byte("---\nid: gamma\nstatus: active\ncreated: 2026-04-30\n---\n"), 0o644))
+
+	s, err := schema.Parse([]byte(`version: 1
+entity: notes
+docs_dir: docs/notes
+filename: "{id}.md"
+id_field: id
+integrity: off
+fields:
+  id: { type: string, required: true }
+  status: { type: string }
+  created: { type: date }
+`))
+	require.NoError(t, err)
+
+	got, err := NewQuerySet(s, basePath).
+		Filter(map[string]any{"status": "active"}).
+		OrderBy("-created").
+		Records()
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.Equal(t, "gamma", got[0]["id"])
+	assert.Equal(t, "alpha", got[1]["id"])
+}
+
+func TestQuerySet_SidecarMode_EmptyDir(t *testing.T) {
+	basePath := t.TempDir()
+	s, err := schema.Parse([]byte(`version: 1
+entity: notes
+docs_dir: docs/notes
+filename: "{id}.md"
+id_field: id
+integrity: off
+fields:
+  id: { type: string, required: true }
+`))
+	require.NoError(t, err)
+
+	got, err := NewQuerySet(s, basePath).Records()
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -84,6 +85,43 @@ func TestWalkDocs_PropagatesParseError(t *testing.T) {
 		[]byte("---\nthis: [is: not: valid: yaml\n---\nbody"),
 		0o644,
 	))
+	_, err := WalkDocsToSlice(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bad.md")
+}
+
+func TestWalkDocs_ConcurrencyStress(t *testing.T) {
+	t.Setenv("SBDB_WALK_WORKERS", "8")
+	dir := t.TempDir()
+	const N = 100
+	for i := 0; i < N; i++ {
+		path := filepath.Join(dir, fmt.Sprintf("doc-%03d.md", i))
+		body := fmt.Sprintf("---\nid: doc-%03d\n---\n# Doc %d\n", i, i)
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
+	}
+
+	docs, err := WalkDocsToSlice(dir)
+	require.NoError(t, err)
+	assert.Len(t, docs, N)
+
+	seen := make(map[string]bool, N)
+	for _, d := range docs {
+		id := d.Frontmatter["id"].(string)
+		require.False(t, seen[id], "duplicate id %s", id)
+		seen[id] = true
+	}
+}
+
+func TestWalkDocs_ConcurrentParseError_MixedBatch(t *testing.T) {
+	t.Setenv("SBDB_WALK_WORKERS", "4")
+	dir := t.TempDir()
+	for i := 0; i < 20; i++ {
+		path := filepath.Join(dir, fmt.Sprintf("doc-%02d.md", i))
+		require.NoError(t, os.WriteFile(path, []byte("---\nid: x\n---\n"), 0o644))
+	}
+	bad := filepath.Join(dir, "bad.md")
+	require.NoError(t, os.WriteFile(bad, []byte("---\nthis: [is: not: valid\n---\n"), 0o644))
+
 	_, err := WalkDocsToSlice(dir)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "bad.md")

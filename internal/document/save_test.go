@@ -1,6 +1,7 @@
 package document
 
 import (
+	"encoding/hex"
 	"path/filepath"
 	"testing"
 
@@ -37,6 +38,33 @@ func TestSave_WritesSidecar(t *testing.T) {
 	assert.NotEmpty(t, sc.ContentSHA)
 	assert.NotEmpty(t, sc.FrontmatterSHA)
 	assert.NotEmpty(t, sc.RecordSHA)
+}
+
+func TestSave_WritesSidecar_WithHMACKey(t *testing.T) {
+	// Use a hex-encoded 32-byte key in the env so LoadKey returns non-nil.
+	keyHex := "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+	t.Setenv("SBDB_INTEGRITY_KEY", keyHex)
+
+	s, rt, basePath := setupTest(t)
+
+	doc := New(s, basePath)
+	doc.Data = map[string]any{
+		"id":      "alpha",
+		"created": "2026-04-28",
+		"status":  "active",
+	}
+	doc.Content = "# Alpha"
+	require.NoError(t, doc.Save(rt))
+
+	mdPath := filepath.Join(basePath, "docs/notes/alpha.md")
+	sc, err := integrity.LoadSidecar(mdPath)
+	require.NoError(t, err)
+	assert.True(t, sc.HMAC, "expected HMAC=true with key configured")
+	assert.NotEmpty(t, sc.Sig, "expected non-empty Sig")
+
+	keyBytes, err := hex.DecodeString(keyHex)
+	require.NoError(t, err)
+	assert.True(t, sc.VerifyWith(keyBytes), "sig should verify with the configured key")
 }
 
 func TestDelete_RemovesSidecar(t *testing.T) {
