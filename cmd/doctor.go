@@ -72,6 +72,8 @@ func init() {
 	doctorSignCmd.Flags().BoolVar(&doctorSignForce, "force", false, "overwrite existing entries")
 	doctorSignCmd.Flags().StringVar(&doctorSignID, "id", "", "sign a specific document (default: all)")
 	doctorCheckCmd.Flags().BoolVar(&doctorAll, "all", false, "audit all docs, not just uncommitted changes")
+	doctorFixCmd.Flags().BoolVar(&doctorAll, "all", false, "audit all docs, not just uncommitted changes")
+	doctorSignCmd.Flags().BoolVar(&doctorAll, "all", false, "audit all docs, not just uncommitted changes")
 
 	rootCmd.AddCommand(doctorCmd)
 }
@@ -359,7 +361,10 @@ func checkDrift(s *schemapkg.Schema, doc *document.Document) []map[string]any {
 	return issues
 }
 
-func runDoctorFix(cmd *cobra.Command, _ []string) error {
+func runDoctorFix(cmd *cobra.Command, args []string) error {
+	if os.Getenv("SBDB_USE_SIDECAR") == "1" {
+		return runDoctorFixV2(cmd, args)
+	}
 	cfg, err := resolveConfig()
 	if err != nil {
 		return err
@@ -400,7 +405,10 @@ func runDoctorFix(cmd *cobra.Command, _ []string) error {
 	})
 }
 
-func runDoctorSign(cmd *cobra.Command, _ []string) error {
+func runDoctorSign(cmd *cobra.Command, args []string) error {
+	if os.Getenv("SBDB_USE_SIDECAR") == "1" {
+		return runDoctorSignV2(cmd, args)
+	}
 	cfg, err := resolveConfig()
 	if err != nil {
 		return err
@@ -485,6 +493,104 @@ func runDoctorSign(cmd *cobra.Command, _ []string) error {
 		"action": "sign",
 		"signed": signed,
 	})
+}
+
+func runDoctorFixV2(cmd *cobra.Command, _ []string) error {
+	cfg, err := resolveConfig()
+	if err != nil {
+		return err
+	}
+	s, err := loadSchema(cfg)
+	if err != nil {
+		return err
+	}
+	docsDir := filepath.Join(cfg.BasePath, s.DocsDir)
+	paths, err := scopedDocPaths(cfg.BasePath, docsDir, doctorAll)
+	if err != nil {
+		return err
+	}
+	key, _ := integrity.LoadKey()
+
+	fixed := 0
+	for _, mdPath := range paths {
+		if err := writeSidecarFromMD(s, cfg.BasePath, mdPath, key, false); err != nil {
+			return err
+		}
+		fixed++
+	}
+	return output.PrintData(outputFormat(cfg), map[string]any{
+		"action": "doctor.fix",
+		"scope":  scopeLabel(doctorAll),
+		"fixed":  fixed,
+	})
+}
+
+func runDoctorSignV2(cmd *cobra.Command, _ []string) error {
+	cfg, err := resolveConfig()
+	if err != nil {
+		return err
+	}
+	s, err := loadSchema(cfg)
+	if err != nil {
+		return err
+	}
+	key, err := integrity.LoadKey()
+	if err != nil {
+		return err
+	}
+	if key == nil {
+		keyErr := fmt.Errorf("sign requires an HMAC key; run sbdb doctor init-key")
+		fmt.Fprintln(os.Stderr, keyErr)
+		return keyErr
+	}
+
+	docsDir := filepath.Join(cfg.BasePath, s.DocsDir)
+	paths, err := scopedDocPaths(cfg.BasePath, docsDir, doctorAll)
+	if err != nil {
+		return err
+	}
+
+	signed := 0
+	for _, mdPath := range paths {
+		if err := writeSidecarFromMD(s, cfg.BasePath, mdPath, key, true); err != nil {
+			return err
+		}
+		signed++
+	}
+	return output.PrintData(outputFormat(cfg), map[string]any{
+		"action": "doctor.sign",
+		"scope":  scopeLabel(doctorAll),
+		"signed": signed,
+	})
+}
+
+// writeSidecarFromMD parses mdPath, recomputes hashes, and writes a fresh
+// sidecar. If requireKey is true, key must be non-nil and the sidecar is
+// HMAC-signed; otherwise signing is best-effort.
+func writeSidecarFromMD(s *schemapkg.Schema, basePath, mdPath string, key []byte, requireKey bool) error {
+	fm, body, err := storage.ParseMarkdown(mdPath)
+	if err != nil {
+		return fmt.Errorf("parsing %s: %w", mdPath, err)
+	}
+	rec := schemapkg.BuildRecordData(s, fm, nil)
+	if rel, e := filepath.Rel(basePath, mdPath); e == nil {
+		rec["file"] = rel
+	}
+	sc := &integrity.Sidecar{
+		Version:        1,
+		Algo:           "sha256",
+		File:           filepath.Base(mdPath),
+		ContentSHA:     integrity.HashContent(body),
+		FrontmatterSHA: integrity.HashFrontmatter(fm),
+		RecordSHA:      integrity.HashRecord(rec),
+	}
+	if key != nil {
+		sc.HMAC = true
+		sc.Sig = sc.SignWith(key)
+	} else if requireKey {
+		return fmt.Errorf("sign requires an HMAC key")
+	}
+	return sc.Save(mdPath)
 }
 
 func runDoctorStatus(cmd *cobra.Command, _ []string) error {

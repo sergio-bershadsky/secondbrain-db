@@ -98,3 +98,26 @@ func TestDoctorCheck_SidecarMode_DetectsContentDrift(t *testing.T) {
 	assert.Contains(t, out, "content_sha mismatch")
 	_ = fmt.Sprintf // keep import
 }
+
+func TestDoctorFix_SidecarMode_RewritesSidecar(t *testing.T) {
+	dir := setupV2KB(t)
+	mdPath := filepath.Join(dir, "docs/notes/alpha.md")
+	require.NoError(t, os.WriteFile(mdPath,
+		[]byte("---\nid: alpha\ncreated: 2026-04-28\n---\nNEW BODY"), 0o644))
+
+	out, code := runCLI(t, dir, []string{"SBDB_USE_SIDECAR=1"},
+		"doctor", "fix", "--recompute", "--all", "-s", "notes")
+	require.Equal(t, 0, code, "fix failed: %s", out)
+
+	_, code = runCLI(t, dir, []string{"SBDB_USE_SIDECAR=1"},
+		"doctor", "check", "--all", "-s", "notes")
+	require.Equal(t, 0, code, "check after fix should be clean")
+}
+
+func TestDoctorSign_SidecarMode_RequiresKey(t *testing.T) {
+	dir := setupV2KB(t)
+	out, code := runCLI(t, dir, []string{"SBDB_USE_SIDECAR=1"},
+		"doctor", "sign", "--force", "--all", "-s", "notes")
+	require.NotEqual(t, 0, code, "sign without key should fail")
+	assert.Contains(t, out, "key")
+}
