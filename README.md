@@ -81,7 +81,6 @@ version: 1
 entity: notes
 docs_dir: docs/notes
 filename: "{id}.md"
-records_dir: data/notes
 id_field: id
 integrity: strict
 
@@ -130,7 +129,7 @@ my-recipes/
 
 Think about what fields your entity needs. For recipes:
 
-- **Scalar fields** (searchable via `records.yaml`): `slug`, `created`, `cuisine`, `difficulty`, `prep_time`
+- **Scalar fields** (queryable from frontmatter): `slug`, `created`, `cuisine`, `difficulty`, `prep_time`
 - **Complex fields** (frontmatter only): `ingredients` (list of objects), `tags`
 - **Virtual fields** (computed from content): `title`, `step_count`
 
@@ -141,8 +140,6 @@ version: 1
 entity: recipes
 docs_dir: docs/recipes
 filename: "{slug}.md"
-records_dir: data/recipes
-partition: none
 id_field: slug
 integrity: strict
 
@@ -333,7 +330,7 @@ sbdb update --id pad-thai --content-file updated-pad-thai.md
 # Soft delete (sets status field to "archived" if schema has one)
 sbdb delete --id pad-thai --soft --yes
 
-# Hard delete (removes .md + record + manifest entry)
+# Hard delete (removes .md + sidecar)
 sbdb delete --id pad-thai --yes
 ```
 
@@ -353,22 +350,22 @@ echo "TAMPERED" >> docs/recipes/pad-thai.md
 
 # Doctor catches it
 sbdb doctor check
-# → exit code 6, reports "content changed" for pad-thai
+# → exits non-zero, reports "content_sha mismatch" for pad-thai
 
 # If the edit was intentional, re-sign it
-sbdb doctor sign --force --id pad-thai
+sbdb doctor sign --force
+# (or: sbdb doctor fix --recompute, which rewrites the sidecar
+#  from current on-disk state without requiring an HMAC key)
 
 # If it was accidental, revert it
 git checkout docs/recipes/pad-thai.md
 ```
 
+By default `doctor check` only audits files that differ from `HEAD` (modified, staged, untracked under any schema's `docs_dir`). Pass `--all` to walk the entire knowledge base. The premise: committed history was already verified, so re-scanning thousands of clean files on every invocation is wasteful — `--all` is for periodic full audits or recovery after an out-of-band edit lands in main.
+
 Exit codes from `doctor check`:
 - `0` — clean
-- `4` — drift (frontmatter vs record mismatch, or event-window violation when an old daily file should have been archived)
-- `6` — tamper (file hash doesn't match manifest)
-- `7` — both drift and tamper
-
-`doctor fix` recovers from drift AND archives any expired event months in one pass.
+- non-zero — drift detected; the JSON output enumerates per-doc causes (`content_sha mismatch`, `frontmatter_sha mismatch`, `record_sha mismatch`, `bad_sig`, `missing-sidecar`, `missing-md`).
 
 ### Step 10: Use multiple schemas in one project
 
@@ -389,20 +386,20 @@ sbdb list -s ingredients
 sbdb list -s meal-plans
 ```
 
-Each schema has its own `docs_dir`, `records_dir`, and integrity manifest — they don't interfere with each other.
+Each schema has its own `docs_dir` and per-doc sidecars — they don't interfere with each other.
 
 ### Schema design reference
 
 **Field type routing (automatic):**
 
-| Field type | Stored in | Queryable without file I/O |
-|---|---|---|
-| `string`, `int`, `float`, `bool`, `date`, `enum` | frontmatter + records.yaml | Yes |
-| `list`, `object` | frontmatter only | No (requires `--load-content`) |
-| `virtual` (scalar return) | both (materialized on save) | Yes |
-| `virtual` (complex return) | frontmatter only | No |
+| Field type | Stored in |
+|---|---|
+| `string`, `int`, `float`, `bool`, `date`, `enum` | frontmatter |
+| `list`, `object` | frontmatter |
+| `virtual` (scalar return) | frontmatter (materialised on save) |
+| `virtual` (complex return) | frontmatter |
 
-**Partitioning:** use `partition: monthly` for time-series data. Records split into `data/<entity>/2026-04.yaml`, `2026-05.yaml`, etc. Requires `date_field` to specify which date field drives the partition.
+All fields live in the markdown's YAML frontmatter. Queries walk `docs_dir` and read frontmatter directly — no separate index file in git. For very large knowledge bases an opt-in local cache may land in a future release; for now plan on this being concurrent file reads (acceptable up to ~10k docs).
 
 **Virtual field patterns:**
 
@@ -449,11 +446,14 @@ version: 1                    # schema format version (always 1)
 entity: <name>                # entity name, used in directory paths
 docs_dir: <path>              # where .md files live (relative to project root)
 filename: "{field}.md"        # filename template with {field} placeholders
-records_dir: <path>           # where records.yaml lives
-partition: none               # "none" or "monthly"
-date_field: <field>           # required when partition is "monthly"
 id_field: <field>             # which field is the primary key (default: "id")
 integrity: strict             # "strict", "warn", or "off"
+
+# Deprecated (still parsed for v1 compatibility, ignored at runtime;
+# the loader prints a stderr notice. Targeted for removal in v3):
+# records_dir: <path>
+# partition: none|monthly
+# date_field: <field>
 ```
 
 ## Events
@@ -509,13 +509,11 @@ There is no at-least-once / exactly-once concern at this layer because there is 
 
 ## How it works
 
-- **Scalar fields** (string, int, date, enum...) are stored in both frontmatter and `records.yaml`
-- **Complex fields** (list, object) are stored in frontmatter only
-- **Virtual fields** are computed from content via sandboxed Starlark, materialized on save
-- **Queries** read only `records.yaml` (fast, no file I/O per record)
-- **Integrity manifest** tracks SHA-256 of content, frontmatter, and record for every doc
-- **Doctor** detects drift (frontmatter vs record) and tamper (hash mismatch)
-- **Events** are derived from git history on demand — the repo's git log IS the event log
+- **Source of truth is the markdown file.** All scalar, complex, and virtual fields live in YAML frontmatter. Virtuals are computed from the body via sandboxed Starlark and materialised back into the frontmatter on every save.
+- **Per-doc sidecars** (`<id>.yaml` next to `<id>.md`) hold integrity hashes and an optional HMAC signature. Two PRs adding two different docs touch disjoint files — git merges them without conflict, which makes parallel-PR / multi-agent workflows safe.
+- **Queries** walk `docs_dir` and parse frontmatter directly. There is no aggregate index file committed to git; nothing is rewritten on every CRUD operation.
+- **Doctor** verifies each `.md` against its sidecar. Default scope is working-tree changes only (committed history was already verified); `--all` does a full audit.
+- **Events** are derived from git history on demand — the repo's git log IS the event log.
 
 ### Component dependency map
 
@@ -526,7 +524,7 @@ How the internal Go packages relate. Arrows mean "imports / depends on".
                               │      cmd/*.go      │  Cobra subcommands
                               │  create / update / │  (CLI entry points)
                               │  delete / query /  │
-                              │  doctor / event    │
+                              │  doctor / events   │
                               └─────────┬──────────┘
                                         │
             ┌───────────────────────────┼───────────────────────────┐
@@ -536,27 +534,28 @@ How the internal Go packages relate. Arrows mean "imports / depends on".
    │  internal/     │           │  internal/   │           │  internal/      │
    │  document      │◄──reads───┤  query       │           │  events         │
    │                │           │              │           │                 │
-   │ • Save / Load  │           │ • QuerySet   │           │ • Appender (lock-
-   │ • virtuals run │           │ • filters    │           │   free O_APPEND)│
-   │ • frontmatter  │           │ • ordering   │           │ • Registry      │
-   └─┬──────┬───────┘           └──────┬───────┘           │   projection    │
-     │      │                          │                   │ • Archiver      │
-     │      │                          v                   │   (git / s3)    │
-     │      │                  ┌────────────────┐          │ • Evolution     │
-     │      │                  │  internal/     │          │   matrix        │
-     │      │                  │  storage       │◄─reads───┤                 │
-     │      │                  │                │          └────────┬────────┘
-     │      │                  │ • records.yaml │                   │
-     │      │                  │ • partitions   │                   │
+   │ • Save / Load  │           │ • QuerySet   │           │ • git log –>    │
+   │ • virtuals run │           │ • filters    │           │   JSONL emit    │
+   │ • frontmatter  │           │ • ordering   │           │   on demand     │
+   └─┬──────┬───────┘           └──────┬───────┘           └────────┬────────┘
+     │      │                          │                            │
+     │      │                          v                            │
+     │      │                  ┌────────────────┐                   │
+     │      │                  │  internal/     │                   │
+     │      │                  │  storage       │                   │
+     │      │                  │                │                   │
+     │      │                  │ • walker       │                   │
+     │      │                  │   (concurrent  │                   │
+     │      │                  │    .md walk)   │                   │
+     │      │                  │ • markdown rw  │                   │
      │      │                  └────────────────┘                   │
      │      │                                                       │
      │      v                                                       │
      │   ┌────────────────┐                                         │
      │   │  internal/     │                                         │
-     │   │  schema        │  YAML schemas, EventTypes, FieldMap     │
-     │   │                │                                         │
-     │   │ • Load / Parse │                                         │
-     │   │ • event_types: │◄────────reads from schema YAML──────────┘
+     │   │  schema        │  YAML schemas, FieldMap, deprecation    │
+     │   │                │  warnings for records_dir / partition   │
+     │   │ • Load / Parse │◄────────reads from schema YAML──────────┘
      │   └────────┬───────┘
      │            │
      │            v
@@ -567,24 +566,23 @@ How the internal Go packages relate. Arrows mean "imports / depends on".
      │   │ • compute()    │
      │   └────────────────┘
      v
-  ┌────────────────┐                    ┌──────────────┐
-  │  internal/     │                    │  internal/   │
-  │  integrity     │───signs/verifies──►│  kg          │  SQLite knowledge graph
-  │                │                    │              │
-  │ • SHA-256      │                    │ • nodes      │
-  │ • HMAC sig     │                    │ • edges      │
-  │ • manifest     │                    │ • chunks +   │
-  └────────┬───────┘                    │   embeddings │
-           │                            └──────┬───────┘
-           v                                   v
-  ┌─────────────────┐                  ┌──────────────────┐
-  │  data/<entity>/ │                  │  data/.sbdb.db   │
-  │  .integrity.    │                  │  (SQLite)        │
-  │  yaml           │                  │                  │
-  └─────────────────┘                  └──────────────────┘
+  ┌────────────────────────────┐         ┌──────────────────┐
+  │  internal/integrity        │         │  internal/kg     │  SQLite KG
+  │                            │  edges  │                  │
+  │ • SHA-256 + HMAC           ├────────►│ • nodes / edges  │
+  │ • Sidecar (per-doc .yaml)  │         │ • chunks +       │
+  │ • GitScope (default        │         │   embeddings     │
+  │   uncommitted-only filter) │         └──────┬───────────┘
+  └────────┬───────────────────┘                │
+           │                                    v
+           v                            ┌──────────────────┐
+  ┌─────────────────────────┐           │  data/.sbdb.db   │  gitignored
+  │ docs/<entity>/<id>.yaml │           │  (SQLite)        │  (rebuildable
+  │ (sidecar — per doc)     │           │                  │   local cache)
+  └─────────────────────────┘           └──────────────────┘
 ```
 
-Key boundaries: `cmd/` is the only thing that talks to user input or stdout. `internal/document` orchestrates a single document's lifecycle. `internal/events` holds the git-projection logic (no imports from other internal packages — it just shells out to `git log`). `internal/storage`, `internal/integrity`, and `internal/kg` are leaf storage services.
+Key boundaries: `cmd/` is the only thing that talks to user input or stdout. `internal/document` orchestrates a single document's lifecycle (markdown + sidecar). `internal/events` holds the git-projection logic (no imports from other internal packages — it just shells out to `git log`). `internal/storage` (walker + markdown read/write) and `internal/integrity` (sidecar + GitScope) are leaf storage services. `internal/kg` is a derived SQLite cache; rebuildable, never committed.
 
 ### Write path: `sbdb create`
 
@@ -606,16 +604,16 @@ What happens when you run `sbdb create -s notes --input -`:
        │ document.New + Save  │
        └──────────┬───────────┘
                   │
-        ┌─────────┼──────────┬───────────────┐
-        │         │          │               │
-        v         v          v               v
-   ┌────────┐ ┌────────┐ ┌──────────┐  ┌─────────────┐
-   │ run    │ │ write  │ │ upsert   │  │ sign with   │
-   │ Stark- │ │ .md +  │ │ records. │  │ HMAC →      │
-   │ lark   │ │ front- │ │ yaml     │  │ .integrity. │
-   │ virt-  │ │ matter │ │          │  │ yaml        │
-   │ uals   │ │        │ │          │  │             │
-   └────────┘ └────────┘ └──────────┘  └─────────────┘
+        ┌─────────┼─────────────────────────┐
+        │         │                         │
+        v         v                         v
+   ┌────────┐ ┌──────────┐         ┌──────────────────┐
+   │ run    │ │  write   │         │ compute SHAs +   │
+   │ Stark- │ │ <id>.md  │         │ optional HMAC →  │
+   │ lark   │ │ + front- │         │ write <id>.yaml  │
+   │ virt-  │ │ matter   │         │ sidecar          │
+   │ uals   │ │          │         │                  │
+   └────────┘ └──────────┘         └──────────────────┘
                   │
                   │ 3. print result JSON to stdout
                   v
@@ -624,37 +622,42 @@ What happens when you run `sbdb create -s notes --input -`:
               └────────┘
 ```
 
-A failure at any step aborts cleanly with no partial state. No event is emitted on CRUD — events come from git history when you run `sbdb events emit` later, so the audit trail is whatever you've committed.
+Two file-system effects per save: the `<id>.md` and its sibling `<id>.yaml` sidecar (one rename-into-place each). No aggregate state to update — two PRs adding two different docs touch disjoint files and merge with zero git conflict. A failure at any step aborts cleanly with no partial state. No event is emitted on CRUD; events come from git history when you run `sbdb events emit` later, so the audit trail is whatever you've committed.
 
 ### Doctor flow
 
-What `sbdb doctor check` and `sbdb doctor fix` do, in order:
+What `sbdb doctor check` and `sbdb doctor fix --recompute` do, in order:
 
 ```
-            sbdb doctor check                       sbdb doctor fix
-            ─────────────────                       ───────────────
-                  │                                       │
-                  v                                       v
-       ┌──────────────────┐                  ┌──────────────────────┐
-       │ load schema +    │                  │ same load steps      │
-       │ records +        │                  └──────────┬───────────┘
-       │ manifest         │                             │
-       └────────┬─────────┘                             v
-                │                              ┌────────────────┐
-                v                              │ for each doc:  │
-       ┌──────────────────┐                    │  doc.Save(rt)  │   fix drift by
-       │ for each doc:    │                    │   — re-runs    │   re-running
-       │  • check drift   │                    │     virtuals   │   the save
-       │  • check tamper  │                    │   — re-syncs   │   pipeline
-       └────────┬─────────┘                    │     records    │
-                │                              │   — re-signs   │
-                v                              └──────┬─────────┘
-        Exit:                                         │
-        0 = clean                                     v
-        4 = drift                                Exit 0
-        6 = tamper
-        7 = both
+        sbdb doctor check                       sbdb doctor fix --recompute
+        ─────────────────                       ───────────────────────────
+              │                                            │
+              v                                            v
+   ┌──────────────────────┐                  ┌─────────────────────────┐
+   │ load schema(s)       │                  │ same load steps         │
+   │ scope paths via      │                  └────────────┬────────────┘
+   │ GitScope (default    │                               │
+   │ uncommitted-only)    │                               v
+   │ or walker (--all)    │                  ┌─────────────────────────┐
+   └─────────┬────────────┘                  │ for each .md in scope:  │
+             │                                │  parse fm + body       │
+             v                                │  recompute SHAs        │
+   ┌──────────────────────┐                  │  rewrite <id>.yaml     │
+   │ for each .md in     │                   │  (HMAC-sign if key      │
+   │ scope:               │                  │   configured)           │
+   │  load <id>.yaml      │                  └─────────────┬───────────┘
+   │  recompute fm + body │                                │
+   │  + record SHAs       │                                v
+   │  compare; report     │                            Exit 0
+   │  drift bits          │
+   └─────────┬────────────┘
+             v
+       Exit:
+       0 = clean
+       1 = drift detected (per-doc causes in JSON output)
 ```
+
+Default scope is the working-tree diff (modified + staged + untracked under any schema's `docs_dir`). `--all` audits everything. Outside a git repo, doctor falls back to `--all` with a stderr notice.
 
 ### Events: projection from git
 
@@ -750,7 +753,7 @@ sbdb layers on top of existing markdown tools — it doesn't replace them. Your 
 | Tool | Compatibility | How it integrates |
 |------|---------------|-------------------|
 | **Obsidian** | Full | Same YAML frontmatter format. sbdb reads/writes frontmatter that Obsidian understands. `[[wikilinks]]` can be extracted as graph edges via virtual fields. Obsidian vault = sbdb knowledge base. |
-| **VitePress** | Full | sbdb manages the `docs/` directory that VitePress serves. VitePress data loaders can read `records.yaml` for dynamic tables. Crawl mode indexes all pages including index files with Vue components. |
+| **VitePress** | Full | sbdb manages the `docs/` directory that VitePress serves. VitePress data loaders can iterate `<id>.md` frontmatter directly for dynamic tables. Crawl mode indexes all pages including index files with Vue components. |
 | **Docusaurus** | Full | Same frontmatter convention. `.mdx` files indexed via crawl mode. Sidebars are independent of sbdb. |
 | **Jekyll** | Full | Jekyll's YAML frontmatter IS sbdb's frontmatter — identical format. `_posts/` maps directly to a schema with monthly partitions. |
 | **MkDocs** | Full | Standard markdown + optional YAML frontmatter. sbdb adds structure without changing what MkDocs reads. |
@@ -770,7 +773,7 @@ sbdb create --input -         # create via CLI, writes .md + sidecar .yaml
 sbdb query --filter ...       # fast structured queries
 ```
 
-sbdb writes both the `.md` file and `records.yaml`. Your wiki tool renders the `.md` files as pages.
+sbdb writes both the `<id>.md` and a sibling `<id>.yaml` sidecar with integrity hashes. Your wiki tool renders the `.md` files as pages; the sidecar is invisible to readers but visible in PR diffs.
 
 **Pattern 2: Crawl mode** (unstructured content)
 
@@ -806,12 +809,13 @@ sbdb search "deployment" --semantic
 Your existing tool         sbdb adds
 ─────────────────         ─────────────
 .md files              →  typed schemas + validation
-YAML frontmatter       →  scalar/complex field routing + records.yaml index
+YAML frontmatter       →  scalar/complex field routing + per-doc sidecar index
 manual editing         →  integrity signing (SHA-256 + HMAC tamper detection)
-file browsing          →  QuerySet with filters, ordering, pagination
+file browsing          →  QuerySet with filters, ordering, pagination, streaming
 Ctrl+F                 →  semantic search (embeddings + cosine similarity)
 mental model           →  knowledge graph (auto-extracted from links + refs)
 git log                →  projected on demand by `sbdb events emit` into a JSONL stream on stdout
+parallel PRs           →  conflict-free merges (per-doc sidecars; no aggregate index)
 ```
 
 ## AI agent integration

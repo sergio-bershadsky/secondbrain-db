@@ -414,6 +414,13 @@ func buildSidecarFromV1(rec map[string]any, entry *integrity.Entry, mdPath strin
 	// Rebuild from disk if no manifest entry.
 	fm, body, err := storage.ParseMarkdown(mdPath)
 	if err == nil {
+		// Normalise the legacy `file` field to OS-native separators so the
+		// migrated sidecar's record_sha matches what `doctor check` recomputes
+		// later (which derives `file` via filepath.Rel — backslashes on
+		// Windows). Without this, post-migrate verification fails on Windows.
+		if f, ok := rec["file"].(string); ok && f != "" {
+			rec["file"] = filepath.FromSlash(f)
+		}
 		sc.ContentSHA = integrity.HashContent(body)
 		sc.FrontmatterSHA = integrity.HashFrontmatter(fm)
 		sc.RecordSHA = integrity.HashRecord(rec)
