@@ -7,9 +7,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/sergio-bershadsky/secondbrain-db/internal/config"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/kg"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/output"
+	"github.com/sergio-bershadsky/secondbrain-db/internal/cli/output"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/config"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/kg"
 )
 
 var graphCmd = &cobra.Command{

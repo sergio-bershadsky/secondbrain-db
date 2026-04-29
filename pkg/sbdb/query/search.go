@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/sergio-bershadsky/secondbrain-db/internal/schema"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/schema"
 )
 
 // SearchResult represents a full-text search match.

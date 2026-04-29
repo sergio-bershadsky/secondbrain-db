@@ -1,7 +1,7 @@
 package integrity
 
 import (
-	"github.com/sergio-bershadsky/secondbrain-db/internal/storage"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/storage"
 )
 
 // HashContent returns the canonical SHA-256 of a markdown body.

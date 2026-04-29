@@ -6,9 +6,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/sergio-bershadsky/secondbrain-db/internal/document"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/schema"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/storage"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/document"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/schema"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/storage"
 )
 
 // QuerySet provides a chainable query interface over records.

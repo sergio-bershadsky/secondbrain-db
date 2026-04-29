@@ -12,9 +12,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/sergio-bershadsky/secondbrain-db/internal/integrity"
-	schemapkg "github.com/sergio-bershadsky/secondbrain-db/internal/schema"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/storage"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/integrity"
+	schemapkg "github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/schema"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/storage"
 )
 
 var (

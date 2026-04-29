@@ -10,9 +10,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/sergio-bershadsky/secondbrain-db/internal/document"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/output"
-	schemapkg "github.com/sergio-bershadsky/secondbrain-db/internal/schema"
+	"github.com/sergio-bershadsky/secondbrain-db/internal/cli/output"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/document"
+	schemapkg "github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/schema"
 )
 
 var (

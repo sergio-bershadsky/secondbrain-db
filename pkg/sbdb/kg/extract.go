@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/sergio-bershadsky/secondbrain-db/internal/schema"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/schema"
 )
 
 var markdownLinkRe = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+\.md)\)`)

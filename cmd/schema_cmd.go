@@ -3,8 +3,8 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/sergio-bershadsky/secondbrain-db/internal/output"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/schema"
+	"github.com/sergio-bershadsky/secondbrain-db/internal/cli/output"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/schema"
 )
 
 var schemaCmd = &cobra.Command{

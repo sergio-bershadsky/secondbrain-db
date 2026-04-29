@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/sergio-bershadsky/secondbrain-db/internal/integrity"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/schema"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/storage"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/integrity"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/schema"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/storage"
 )
 
 // LoadFromFile reads a document from a markdown file.

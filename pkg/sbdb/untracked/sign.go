@@ -3,8 +3,8 @@ package untracked
 import (
 	"fmt"
 
-	"github.com/sergio-bershadsky/secondbrain-db/internal/integrity"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/storage"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/integrity"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/storage"
 )
 
 // TamperCheck describes a mismatch for an untracked file.

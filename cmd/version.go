@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/sergio-bershadsky/secondbrain-db/internal/version"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/version"
 )
 
 var versionCmd = &cobra.Command{

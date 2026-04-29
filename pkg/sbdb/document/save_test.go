@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/sergio-bershadsky/secondbrain-db/internal/integrity"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/integrity"
 )
 
 func TestSave_WritesSidecar(t *testing.T) {

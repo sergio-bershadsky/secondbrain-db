@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/sergio-bershadsky/secondbrain-db/internal/integrity"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/schema"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/integrity"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/schema"
 )
 
 // FileClass describes how sbdb classifies a file.

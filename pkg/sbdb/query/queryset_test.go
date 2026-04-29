@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/sergio-bershadsky/secondbrain-db/internal/document"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/schema"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/document"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/schema"
 )
 
 const testSchemaYAML = `

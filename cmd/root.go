@@ -7,10 +7,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/sergio-bershadsky/secondbrain-db/internal/config"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/schema"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/version"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/virtuals"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/config"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/schema"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/version"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/virtuals"
 )
 
 var (

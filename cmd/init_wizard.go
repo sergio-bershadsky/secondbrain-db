@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/sergio-bershadsky/secondbrain-db/internal/output"
+	"github.com/sergio-bershadsky/secondbrain-db/internal/cli/output"
 )
 
 var initInteractive bool

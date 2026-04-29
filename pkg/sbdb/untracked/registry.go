@@ -10,7 +10,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/sergio-bershadsky/secondbrain-db/internal/version"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/version"
 )
 
 // Clock can be overridden by callers to make timestamps deterministic in tests.

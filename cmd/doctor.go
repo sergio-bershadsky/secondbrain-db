@@ -9,10 +9,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/sergio-bershadsky/secondbrain-db/internal/integrity"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/output"
-	schemapkg "github.com/sergio-bershadsky/secondbrain-db/internal/schema"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/storage"
+	"github.com/sergio-bershadsky/secondbrain-db/internal/cli/output"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/integrity"
+	schemapkg "github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/schema"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/storage"
 )
 
 var doctorCmd = &cobra.Command{

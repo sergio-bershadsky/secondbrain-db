@@ -3,8 +3,8 @@ package cmd
 import (
 	"testing"
 
-	"github.com/sergio-bershadsky/secondbrain-db/internal/document"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/schema"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/document"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/schema"
 )
 
 // minimalSchema returns a bare Schema sufficient to construct a Document.

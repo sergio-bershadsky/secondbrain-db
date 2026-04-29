@@ -10,7 +10,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
-	"github.com/sergio-bershadsky/secondbrain-db/internal/semantic"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/semantic"
 )
 
 // Clock can be overridden by callers to make timestamps deterministic in tests.

@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/sergio-bershadsky/secondbrain-db/internal/storage"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/storage"
 )
 
 // CrawlResult holds stats from a crawl-mode index build.

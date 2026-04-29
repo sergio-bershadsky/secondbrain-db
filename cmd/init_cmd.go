@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/sergio-bershadsky/secondbrain-db/internal/output"
+	"github.com/sergio-bershadsky/secondbrain-db/internal/cli/output"
 )
 
 var initCmd = &cobra.Command{

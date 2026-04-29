@@ -5,10 +5,10 @@ import (
 	"log/slog"
 	"path/filepath"
 
-	"github.com/sergio-bershadsky/secondbrain-db/internal/integrity"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/schema"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/storage"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/virtuals"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/integrity"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/schema"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/storage"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/virtuals"
 )
 
 // Logger is the slog handler used for non-fatal warnings (post-hook
