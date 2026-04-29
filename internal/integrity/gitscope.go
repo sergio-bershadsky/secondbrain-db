@@ -21,7 +21,8 @@ type GitScope struct {
 // If dir is not a git repo, returns IsRepo=false with no error.
 func NewGitScope(dir string) (*GitScope, error) {
 	// Resolve symlinks so git's output (which uses real paths) can be
-	// mapped back to the caller's dir form (e.g. /var vs /private/var on macOS).
+	// mapped back to the caller's dir form. Handles macOS /var↔/private/var
+	// and Windows 8.3 short names (e.g. RUNNER~1↔runneradmin).
 	realDir, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		realDir = dir
@@ -31,15 +32,17 @@ func NewGitScope(dir string) (*GitScope, error) {
 	if err != nil {
 		return &GitScope{IsRepo: false}, nil
 	}
+	// Git emits forward slashes even on Windows; normalise to OS-native.
+	realRoot = filepath.FromSlash(realRoot)
 
-	// Derive the caller-visible root by substituting realDir→dir in realRoot.
-	// This preserves any symlink prefix the caller used.
-	var root string
-	if realDir != dir && strings.HasPrefix(realRoot, realDir) {
-		root = dir + realRoot[len(realDir):]
-	} else {
-		root = realRoot
+	// Derive the caller-visible root via path-relative arithmetic. This
+	// works regardless of slash style or short/long Windows names because
+	// filepath.Rel is OS-aware (case-insensitive on Windows).
+	rel, err := filepath.Rel(realDir, realRoot)
+	if err != nil {
+		rel = "."
 	}
+	root := filepath.Clean(filepath.Join(dir, rel))
 
 	porcelain, err := gitPorcelain(realDir)
 	if err != nil {

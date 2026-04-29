@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 
@@ -26,7 +27,11 @@ func sbdbBin(t *testing.T) string {
 	sbdbBinOnce.Do(func() {
 		dir, err := os.MkdirTemp("", "sbdb-test-bin-*")
 		require.NoError(t, err)
-		sbdbBinPath = filepath.Join(dir, "sbdb")
+		name := "sbdb"
+		if runtime.GOOS == "windows" {
+			name += ".exe"
+		}
+		sbdbBinPath = filepath.Join(dir, name)
 		cmd := exec.Command("go", "build", "-o", sbdbBinPath, "github.com/sergio-bershadsky/secondbrain-db")
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, "build sbdb: %s", out)

@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -253,7 +254,11 @@ func ensureBinary(t *testing.T) string {
 			binaryErr = err
 			return
 		}
-		binaryPath = filepath.Join(dir, "sbdb")
+		name := "sbdb"
+		if runtime.GOOS == "windows" {
+			name += ".exe"
+		}
+		binaryPath = filepath.Join(dir, name)
 		// Build from repo root (parent of this package).
 		repoRoot, err := repoRoot()
 		if err != nil {
