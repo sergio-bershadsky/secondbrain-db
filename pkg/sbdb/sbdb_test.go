@@ -102,6 +102,43 @@ func TestPublicAPI_OpenUnknownEntity(t *testing.T) {
 	assert.ErrorIs(t, err, sbdb.ErrUnknownEntity)
 }
 
+func TestPublicAPI_DBSchemas_ListsLoaded(t *testing.T) {
+	ctx := context.Background()
+	dir := setupTestProject(t)
+	db, err := sbdb.Open(ctx, sbdb.Config{Root: dir})
+	require.NoError(t, err)
+	defer db.Close()
+
+	names := []string{}
+	for _, s := range db.Schemas() {
+		names = append(names, s.Entity)
+	}
+	assert.ElementsMatch(t, []string{"notes"}, names)
+}
+
+func TestPublicAPI_RepoSchema_ReturnsEntity(t *testing.T) {
+	ctx := context.Background()
+	dir := setupTestProject(t)
+	db, err := sbdb.Open(ctx, sbdb.Config{Root: dir})
+	require.NoError(t, err)
+	defer db.Close()
+
+	repo := db.Repo("notes")
+	require.NotNil(t, repo.Schema())
+	assert.Equal(t, "notes", repo.Schema().Entity)
+}
+
+func TestPublicAPI_GetReturnsErrNotFound(t *testing.T) {
+	ctx := context.Background()
+	dir := setupTestProject(t)
+	db, err := sbdb.Open(ctx, sbdb.Config{Root: dir})
+	require.NoError(t, err)
+	defer db.Close()
+
+	_, err = db.Repo("notes").Get(ctx, "missing-id")
+	assert.ErrorIs(t, err, sbdb.ErrNotFound)
+}
+
 func TestPublicAPI_CreateDuplicateRejected(t *testing.T) {
 	ctx := context.Background()
 	dir := setupTestProject(t)
