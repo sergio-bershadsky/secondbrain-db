@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.0](https://github.com/sergio-bershadsky/secondbrain-db/compare/v1.3.1...v2.0.0) (2026-04-29)
+
+
+### ⚠ BREAKING CHANGES
+
+* data/<entity>/records.yaml and .integrity.yaml are no longer written or read on the active code path. Existing v1 KBs must run `sbdb doctor migrate` once before using v2.
+
+### Features
+
+* drop data/ layer; per-md sidecars; remove builtin templates ([#37](https://github.com/sergio-bershadsky/secondbrain-db/issues/37)) ([891bc00](https://github.com/sergio-bershadsky/secondbrain-db/commit/891bc000099e4482deea174f2501c90ec9d2c730))
+
 ## [1.3.1](https://github.com/sergio-bershadsky/secondbrain-db/compare/v1.3.0...v1.3.1) (2026-04-28)
 
 
