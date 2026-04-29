@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,8 +12,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/sergio-bershadsky/secondbrain-db/internal/cli/output"
-	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/document"
-	schemapkg "github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/schema"
+	clir "github.com/sergio-bershadsky/secondbrain-db/internal/cli/runtime"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb"
 )
 
 var (
@@ -38,17 +39,48 @@ func init() {
 }
 
 func runCreate(cmd *cobra.Command, _ []string) error {
-	cfg, err := resolveConfig()
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	db, cfg, err := clir.OpenDB(ctx, flagBasePath, flagSchemaDir, flagSchema, flagFormat)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	repo, err := db.RepoErr(cfg.DefaultSchema)
 	if err != nil {
 		return err
 	}
 
-	s, err := loadSchema(cfg)
+	format := clir.OutputFormat(cfg)
+
+	fm, content, err := buildCreatePayload(format)
 	if err != nil {
 		return err
 	}
 
-	format := outputFormat(cfg)
+	if flagDryRun {
+		result := map[string]any{"action": "create", "data": fm, "content_length": len(content)}
+		return output.PrintData(format, result)
+	}
+
+	saved, err := repo.Create(ctx, sbdb.Doc{Frontmatter: fm, Content: content})
+	if err != nil {
+		return err
+	}
+	return clir.PrintData(cfg, map[string]any{
+		"action":      "create",
+		"id":          saved.ID,
+		"frontmatter": saved.Frontmatter,
+	})
+}
+
+// buildCreatePayload parses --input, --field, --content, --content-file flags
+// and returns the frontmatter map and content string.
+func buildCreatePayload(format string) (map[string]any, string, error) {
 	data := make(map[string]any)
 	content := ""
 
@@ -61,7 +93,7 @@ func runCreate(cmd *cobra.Command, _ []string) error {
 			f, err := os.Open(createInput)
 			if err != nil {
 				output.PrintError(format, "INPUT_ERROR", err.Error(), nil)
-				return err
+				return nil, "", err
 			}
 			defer f.Close()
 			reader = f
@@ -69,13 +101,13 @@ func runCreate(cmd *cobra.Command, _ []string) error {
 
 		raw, err := io.ReadAll(reader)
 		if err != nil {
-			return err
+			return nil, "", err
 		}
 
 		var payload map[string]any
 		if err := json.Unmarshal(raw, &payload); err != nil {
 			output.PrintError(format, "PARSE_ERROR", "invalid JSON input", nil)
-			return err
+			return nil, "", err
 		}
 
 		// Extract content if present
@@ -90,7 +122,7 @@ func runCreate(cmd *cobra.Command, _ []string) error {
 	for _, kv := range createFields {
 		parts := strings.SplitN(kv, "=", 2)
 		if len(parts) != 2 {
-			return fmt.Errorf("invalid --field format: %q (expected KEY=VALUE)", kv)
+			return nil, "", fmt.Errorf("invalid --field format: %q (expected KEY=VALUE)", kv)
 		}
 		data[parts[0]] = parseFieldValue(parts[1])
 	}
@@ -102,41 +134,12 @@ func runCreate(cmd *cobra.Command, _ []string) error {
 	if createContentFile != "" {
 		raw, err := os.ReadFile(createContentFile)
 		if err != nil {
-			return fmt.Errorf("reading content file: %w", err)
+			return nil, "", fmt.Errorf("reading content file: %w", err)
 		}
 		content = string(raw)
 	}
 
-	// Validate
-	if errs := schemapkg.ValidateRecord(s, data); len(errs) > 0 {
-		output.PrintError(format, "VALIDATION_ERROR", errs.Error(), errs)
-		os.Exit(3)
-	}
-
-	if flagDryRun {
-		result := map[string]any{"action": "create", "data": data, "content_length": len(content)}
-		return output.PrintData(format, result)
-	}
-
-	// Create document
-	doc := document.New(s, cfg.BasePath)
-	doc.Data = data
-	doc.Content = content
-
-	rt, err := loadRuntime(s)
-	if err != nil {
-		return err
-	}
-
-	if err := doc.Save(rt); err != nil {
-		output.PrintError(format, "SAVE_ERROR", err.Error(), nil)
-		return err
-	}
-
-	// Output the created record
-	result := doc.AllData()
-	result["file"] = doc.RelativeFilePath()
-	return output.PrintData(format, result)
+	return data, content, nil
 }
 
 // parseFieldValue attempts to interpret a CLI string value as a typed value.

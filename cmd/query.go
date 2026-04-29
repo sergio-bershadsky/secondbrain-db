@@ -1,13 +1,13 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"
 
-	"github.com/sergio-bershadsky/secondbrain-db/internal/cli/output"
-	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/query"
+	clir "github.com/sergio-bershadsky/secondbrain-db/internal/cli/runtime"
 )
 
 var (
@@ -40,18 +40,23 @@ func init() {
 }
 
 func runQuery(cmd *cobra.Command, _ []string) error {
-	cfg, err := resolveConfig()
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	db, cfg, err := clir.OpenDB(ctx, flagBasePath, flagSchemaDir, flagSchema, flagFormat)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	repo, err := db.RepoErr(cfg.DefaultSchema)
 	if err != nil {
 		return err
 	}
 
-	s, err := loadSchema(cfg)
-	if err != nil {
-		return err
-	}
-
-	format := outputFormat(cfg)
-	qs := query.NewQuerySet(s, cfg.BasePath)
+	qs := repo.Query()
 
 	// Apply filters
 	if len(queryFilters) > 0 {
@@ -80,7 +85,7 @@ func runQuery(cmd *cobra.Command, _ []string) error {
 		if err != nil {
 			return err
 		}
-		return output.PrintData(format, map[string]any{"count": count})
+		return clir.PrintData(cfg, map[string]any{"count": count})
 	}
 
 	// Exists-only
@@ -89,7 +94,7 @@ func runQuery(cmd *cobra.Command, _ []string) error {
 		if err != nil {
 			return err
 		}
-		return output.PrintData(format, map[string]any{"exists": exists})
+		return clir.PrintData(cfg, map[string]any{"exists": exists})
 	}
 
 	// Full query
@@ -108,14 +113,14 @@ func runQuery(cmd *cobra.Command, _ []string) error {
 			data["file"] = doc.RelativeFilePath()
 			results = append(results, data)
 		}
-		return output.PrintData(format, results)
+		return clir.PrintData(cfg, results)
 	}
 
 	records, err := qs.Records()
 	if err != nil {
 		return err
 	}
-	return output.PrintData(format, records)
+	return clir.PrintData(cfg, records)
 }
 
 func parseKVPairs(pairs []string) map[string]any {

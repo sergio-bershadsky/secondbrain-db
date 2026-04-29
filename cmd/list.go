@@ -1,12 +1,12 @@
 package cmd
 
 import (
+	"context"
 	"strings"
 
 	"github.com/spf13/cobra"
 
-	"github.com/sergio-bershadsky/secondbrain-db/internal/cli/output"
-	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/query"
+	clir "github.com/sergio-bershadsky/secondbrain-db/internal/cli/runtime"
 )
 
 var (
@@ -31,18 +31,23 @@ func init() {
 }
 
 func runList(cmd *cobra.Command, _ []string) error {
-	cfg, err := resolveConfig()
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	db, cfg, err := clir.OpenDB(ctx, flagBasePath, flagSchemaDir, flagSchema, flagFormat)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	repo, err := db.RepoErr(cfg.DefaultSchema)
 	if err != nil {
 		return err
 	}
 
-	s, err := loadSchema(cfg)
-	if err != nil {
-		return err
-	}
-
-	format := outputFormat(cfg)
-	qs := query.NewQuerySet(s, cfg.BasePath)
+	qs := repo.Query()
 
 	if listOrder != "" {
 		qs = qs.OrderBy(listOrder)
@@ -65,7 +70,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 		records = projectFields(records, fields)
 	}
 
-	return output.PrintData(format, records)
+	return clir.PrintData(cfg, records)
 }
 
 func projectFields(records []map[string]any, fields []string) []map[string]any {
