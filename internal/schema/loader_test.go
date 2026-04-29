@@ -2,7 +2,7 @@ package schema
 
 import (
 	"bytes"
-	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,22 +11,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func captureStderr(t *testing.T, fn func()) string {
+// captureLogOutput redirects the package Logger to a buffer for the duration
+// of fn, then restores the original logger and returns the captured output.
+func captureLogOutput(t *testing.T, fn func()) string {
 	t.Helper()
-	r, w, err := os.Pipe()
-	require.NoError(t, err)
-	old := os.Stderr
-	os.Stderr = w
-	done := make(chan string, 1)
-	go func() {
-		var buf bytes.Buffer
-		_, _ = io.Copy(&buf, r)
-		done <- buf.String()
-	}()
+	var buf bytes.Buffer
+	old := Logger
+	Logger = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	defer func() { Logger = old }()
 	fn()
-	w.Close()
-	os.Stderr = old
-	return <-done
+	return buf.String()
 }
 
 const testSchemaYAML = `
@@ -174,13 +168,13 @@ fields:
 	path := filepath.Join(dir, "notes.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(yamlData), 0o644))
 
-	stderr := captureStderr(t, func() {
+	output := captureLogOutput(t, func() {
 		_, err := Load(path)
 		require.NoError(t, err)
 	})
-	assert.Contains(t, stderr, "records_dir")
-	assert.Contains(t, stderr, "partition")
-	assert.Contains(t, stderr, "deprecated")
+	assert.Contains(t, output, "records_dir")
+	assert.Contains(t, output, "partition")
+	assert.Contains(t, output, "deprecated")
 }
 
 func TestLoad_NoWarning_WhenFieldsAbsent(t *testing.T) {
@@ -197,9 +191,9 @@ fields:
 	path := filepath.Join(dir, "notes.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(yamlData), 0o644))
 
-	stderr := captureStderr(t, func() {
+	output := captureLogOutput(t, func() {
 		_, err := Load(path)
 		require.NoError(t, err)
 	})
-	assert.Empty(t, stderr)
+	assert.Empty(t, output)
 }

@@ -2,7 +2,7 @@ package document
 
 import (
 	"fmt"
-	"os"
+	"log/slog"
 	"path/filepath"
 
 	"github.com/sergio-bershadsky/secondbrain-db/internal/integrity"
@@ -10,6 +10,10 @@ import (
 	"github.com/sergio-bershadsky/secondbrain-db/internal/storage"
 	"github.com/sergio-bershadsky/secondbrain-db/internal/virtuals"
 )
+
+// Logger is the slog handler used for non-fatal warnings (post-hook
+// failures, deprecation notices). Default: slog.Default().
+var Logger = slog.Default()
 
 // Save writes the document to disk.
 // Always writes <id>.yaml sidecar next to <id>.md.
@@ -37,7 +41,7 @@ func (d *Document) Save(rt *virtuals.Runtime) error {
 
 	if d.OnSave != nil {
 		if err := d.OnSave(d); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: post-save hook failed for %s: %v\n", d.ID(), err)
+			Logger.Warn("post-save hook failed", "id", d.ID(), "error", err)
 		}
 	}
 	return nil
@@ -57,7 +61,7 @@ func (d *Document) Delete() error {
 
 	if d.OnDelete != nil {
 		if err := d.OnDelete(id); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: post-delete hook failed for %s: %v\n", id, err)
+			Logger.Warn("post-delete hook failed", "id", id, "error", err)
 		}
 	}
 	return nil

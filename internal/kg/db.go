@@ -3,6 +3,7 @@ package kg
 import (
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -11,6 +12,14 @@ import (
 
 	"github.com/sergio-bershadsky/secondbrain-db/internal/semantic"
 )
+
+// Clock can be overridden by callers to make timestamps deterministic in tests.
+// Default: time.Now.
+var Clock = time.Now
+
+// Logger is the slog handler used for non-fatal warnings (e.g. embedding
+// failures during crawl). Default: slog.Default().
+var Logger = slog.Default()
 
 // DB wraps a SQLite database for the knowledge graph and semantic search.
 type DB struct {
@@ -196,5 +205,5 @@ func (d *DB) Drop() error {
 }
 
 func nowRFC3339() string {
-	return time.Now().UTC().Format(time.RFC3339)
+	return Clock().UTC().Format(time.RFC3339)
 }

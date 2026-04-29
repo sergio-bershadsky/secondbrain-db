@@ -2,11 +2,16 @@ package schema
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 )
+
+// Logger is the slog handler used for deprecation warnings and non-fatal
+// notices during schema loading. Default: slog.Default().
+var Logger = slog.Default()
 
 // Load reads and parses a schema from a YAML file.
 func Load(path string) (*Schema, error) {
@@ -23,10 +28,10 @@ func Load(path string) (*Schema, error) {
 	// Best-effort; ignore unmarshal errors — Parse below will catch real problems.
 	_ = yaml.Unmarshal(data, &raw)
 	if raw.RecordsDir != "" {
-		fmt.Fprintf(os.Stderr, "%s: 'records_dir' is deprecated and ignored in v2; remove it\n", path)
+		Logger.Warn("'records_dir' is deprecated and ignored in v2; remove it", "file", path)
 	}
 	if raw.Partition != "" && raw.Partition != "none" {
-		fmt.Fprintf(os.Stderr, "%s: 'partition' is deprecated; v2 has no aggregate records to partition. If you want monthly directory layout under docs_dir, organize the filenames yourself (e.g., id values like 2026-04/hello)\n", path)
+		Logger.Warn("'partition' is deprecated; v2 has no aggregate records to partition. If you want monthly directory layout under docs_dir, organize the filenames yourself (e.g., id values like 2026-04/hello)", "file", path)
 	}
 
 	return Parse(data)

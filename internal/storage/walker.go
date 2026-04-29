@@ -29,7 +29,7 @@ func WalkDocsToSlice(docsDir string) ([]Doc, error) {
 		return nil, nil
 	}
 
-	workers := walkerWorkers()
+	workers := WorkerCount()
 	jobs := make(chan string, len(paths))
 	for _, p := range paths {
 		jobs <- p
@@ -105,7 +105,12 @@ func collectMDPaths(docsDir string) ([]string, error) {
 	return paths, nil
 }
 
-func walkerWorkers() int {
+// WorkerCount can be overridden by callers to control walker concurrency
+// without setting the env var. Default reads SBDB_WALK_WORKERS env, then
+// runtime.GOMAXPROCS(0).
+var WorkerCount = defaultWorkerCount
+
+func defaultWorkerCount() int {
 	if v := os.Getenv("SBDB_WALK_WORKERS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			return n

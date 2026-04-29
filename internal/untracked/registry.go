@@ -13,6 +13,10 @@ import (
 	"github.com/sergio-bershadsky/secondbrain-db/internal/version"
 )
 
+// Clock can be overridden by callers to make timestamps deterministic in tests.
+// Default: time.Now.
+var Clock = time.Now
+
 // Registry holds all untracked-but-signed file entries.
 type Registry struct {
 	Version int     `yaml:"version"`
@@ -88,7 +92,7 @@ func (r *Registry) Save(basePath string) error {
 
 // Add inserts or updates an entry in the registry.
 func (r *Registry) Add(e Entry) {
-	e.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	e.UpdatedAt = Clock().UTC().Format(time.RFC3339)
 	e.Writer = "secondbrain-db/" + version.Version
 
 	for i, existing := range r.Entries {

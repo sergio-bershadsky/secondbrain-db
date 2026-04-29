@@ -116,8 +116,7 @@ func (d *Document) VerifyIntegrity() error {
 		if drift.BadSig {
 			mismatched = append(mismatched, "hmac")
 		}
-		fmt.Fprintf(os.Stderr, "warning: integrity mismatch for %q (%s): %v changed\n",
-			id, d.FilePath(), mismatched)
+		Logger.Warn("integrity mismatch", "id", id, "file", d.FilePath(), "changed", mismatched)
 		return nil
 	}
 

@@ -125,7 +125,7 @@ func (d *DB) CrawlAndIndex(opts CrawlOptions) (*CrawlResult, error) {
 			if len(chunks) > 0 {
 				if err := d.indexChunksRaw(docID, entity, chunks); err != nil {
 					// Log but don't fail the crawl
-					fmt.Fprintf(os.Stderr, "warning: embedding failed for %s: %v\n", relPath, err)
+					Logger.Warn("embedding failed", "file", relPath, "error", err)
 				}
 			}
 		}

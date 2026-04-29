@@ -15,6 +15,10 @@ import (
 	"github.com/sergio-bershadsky/secondbrain-db/internal/version"
 )
 
+// Clock can be overridden by callers (the pkg/sbdb facade) to make
+// sidecar timestamps deterministic in tests. Default is time.Now.
+var Clock = time.Now
+
 // Sidecar is the per-doc integrity manifest stored next to the .md file.
 // File path: replaces the .md extension with .yaml (e.g. hello.md → hello.yaml).
 type Sidecar struct {
@@ -58,7 +62,7 @@ func LoadSidecar(mdPath string) (*Sidecar, error) {
 // Save writes the sidecar atomically (temp + rename).
 func (s *Sidecar) Save(mdPath string) error {
 	if s.UpdatedAt == "" {
-		s.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		s.UpdatedAt = Clock().UTC().Format(time.RFC3339)
 	}
 	if s.Writer == "" {
 		s.Writer = "secondbrain-db/" + version.Version

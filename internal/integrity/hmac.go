@@ -1,6 +1,7 @@
 package integrity
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -9,6 +10,39 @@ import (
 	"os"
 	"path/filepath"
 )
+
+// KeyLoader is the strategy used to resolve the HMAC integrity key.
+// Default: env var SBDB_INTEGRITY_KEY, then ~/.config/secondbrain-db/integrity.key.
+// Callers (pkg/sbdb) may swap this for a static key, file path, or callback.
+var KeyLoader = defaultKeyLoader
+
+func defaultKeyLoader(_ context.Context) ([]byte, error) {
+	// 1. Environment variable
+	if envKey := os.Getenv("SBDB_INTEGRITY_KEY"); envKey != "" {
+		key, err := hex.DecodeString(envKey)
+		if err != nil {
+			return nil, fmt.Errorf("SBDB_INTEGRITY_KEY is not valid hex: %w", err)
+		}
+		return key, nil
+	}
+
+	// 2. Config file
+	home, err := os.UserHomeDir()
+	if err == nil {
+		keyPath := filepath.Join(home, ".config", "secondbrain-db", "integrity.key")
+		data, err := os.ReadFile(keyPath)
+		if err == nil {
+			hexStr := trimWhitespace(string(data))
+			key, err := hex.DecodeString(hexStr)
+			if err != nil {
+				return nil, fmt.Errorf("integrity.key is not valid hex: %w", err)
+			}
+			return key, nil
+		}
+	}
+
+	return nil, nil
+}
 
 // SignEntry computes the HMAC signature for a manifest entry.
 func SignEntry(entry *Entry, key []byte) string {
@@ -47,34 +81,9 @@ func SaveKeyFile(path string, key []byte) error {
 // 1. SBDB_INTEGRITY_KEY env var (hex-encoded)
 // 2. ~/.config/secondbrain-db/integrity.key file
 // Returns nil key (no error) if no key is configured.
+// Delegates to KeyLoader for testability.
 func LoadKey() ([]byte, error) {
-	// 1. Environment variable
-	if envKey := os.Getenv("SBDB_INTEGRITY_KEY"); envKey != "" {
-		key, err := hex.DecodeString(envKey)
-		if err != nil {
-			return nil, fmt.Errorf("SBDB_INTEGRITY_KEY is not valid hex: %w", err)
-		}
-		return key, nil
-	}
-
-	// 2. Config file
-	home, err := os.UserHomeDir()
-	if err == nil {
-		keyPath := filepath.Join(home, ".config", "secondbrain-db", "integrity.key")
-		data, err := os.ReadFile(keyPath)
-		if err == nil {
-			// Trim whitespace/newline
-			hexStr := string(data)
-			hexStr = trimWhitespace(hexStr)
-			key, err := hex.DecodeString(hexStr)
-			if err != nil {
-				return nil, fmt.Errorf("integrity.key is not valid hex: %w", err)
-			}
-			return key, nil
-		}
-	}
-
-	return nil, nil
+	return KeyLoader(context.Background())
 }
 
 // DefaultKeyPath returns the default path for the integrity key file.
