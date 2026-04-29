@@ -2,6 +2,7 @@ package query
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -149,8 +150,24 @@ func (qs *QuerySet) Records() ([]map[string]any, error) {
 }
 
 func (qs *QuerySet) loadRecords() ([]map[string]any, error) {
-	recordsDir := fmt.Sprintf("%s/%s", qs.basePath, qs.schema.RecordsDir)
-	return storage.LoadAllPartitions(recordsDir, qs.schema.Partition)
+	return qs.loadRecordsViaWalker()
+}
+
+func (qs *QuerySet) loadRecordsViaWalker() ([]map[string]any, error) {
+	docsDir := filepath.Join(qs.basePath, qs.schema.DocsDir)
+	docs, err := storage.WalkDocsToSlice(docsDir)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]map[string]any, 0, len(docs))
+	for _, d := range docs {
+		rec := schema.BuildRecordData(qs.schema, d.Frontmatter, nil)
+		if rel, e := filepath.Rel(qs.basePath, d.Path); e == nil {
+			rec["file"] = rel
+		}
+		out = append(out, rec)
+	}
+	return out, nil
 }
 
 func (qs *QuerySet) applyFilters(records []map[string]any) []map[string]any {

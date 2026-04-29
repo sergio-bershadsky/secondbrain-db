@@ -5,13 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
-	"github.com/sergio-bershadsky/secondbrain-db/internal/document"
 	"github.com/sergio-bershadsky/secondbrain-db/internal/integrity"
 	"github.com/sergio-bershadsky/secondbrain-db/internal/output"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/query"
 	schemapkg "github.com/sergio-bershadsky/secondbrain-db/internal/schema"
 	"github.com/sergio-bershadsky/secondbrain-db/internal/storage"
 )
@@ -53,10 +52,19 @@ var doctorInitKeyCmd = &cobra.Command{
 	RunE:  runDoctorInitKey,
 }
 
+var doctorMigrateDryRun bool
+
+var doctorMigrateCmd = &cobra.Command{
+	Use:   "migrate",
+	Short: "Migrate v1 (data/) layout to v2 (per-md sidecars)",
+	RunE:  runDoctorMigrate,
+}
+
 var (
 	doctorFixRecompute bool
 	doctorSignForce    bool
 	doctorSignID       string
+	doctorAll          bool
 )
 
 func init() {
@@ -65,10 +73,15 @@ func init() {
 	doctorCmd.AddCommand(doctorSignCmd)
 	doctorCmd.AddCommand(doctorStatusCmd)
 	doctorCmd.AddCommand(doctorInitKeyCmd)
+	doctorMigrateCmd.Flags().BoolVar(&doctorMigrateDryRun, "dry-run", false, "report planned changes without writing")
+	doctorCmd.AddCommand(doctorMigrateCmd)
 
 	doctorFixCmd.Flags().BoolVar(&doctorFixRecompute, "recompute", false, "recompute virtual fields")
 	doctorSignCmd.Flags().BoolVar(&doctorSignForce, "force", false, "overwrite existing entries")
 	doctorSignCmd.Flags().StringVar(&doctorSignID, "id", "", "sign a specific document (default: all)")
+	doctorCheckCmd.Flags().BoolVar(&doctorAll, "all", false, "audit all docs, not just uncommitted changes")
+	doctorFixCmd.Flags().BoolVar(&doctorAll, "all", false, "audit all docs, not just uncommitted changes")
+	doctorSignCmd.Flags().BoolVar(&doctorAll, "all", false, "audit all docs, not just uncommitted changes")
 
 	rootCmd.AddCommand(doctorCmd)
 }
@@ -78,140 +91,138 @@ func runDoctorCheck(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-
 	s, err := loadSchema(cfg)
 	if err != nil {
 		return err
 	}
+	docsDir := filepath.Join(cfg.BasePath, s.DocsDir)
+
+	paths, err := scopedDocPaths(cfg.BasePath, docsDir, doctorAll)
+	if err != nil {
+		return err
+	}
+
+	key, _ := integrity.LoadKey()
+	var drifts []map[string]any
+	for _, mdPath := range paths {
+		if report := checkOneDoc(s, cfg.BasePath, mdPath, key); report != nil {
+			drifts = append(drifts, report)
+		}
+	}
 
 	format := outputFormat(cfg)
-	qs := query.NewQuerySet(s, cfg.BasePath)
-
-	docs, err := qs.All()
-	if err != nil {
-		return err
+	_ = output.PrintData(format, map[string]any{
+		"action": "doctor.check",
+		"scope":  scopeLabel(doctorAll),
+		"drifts": drifts,
+	})
+	if len(drifts) > 0 {
+		os.Exit(1)
 	}
-
-	manifest, err := integrity.LoadManifest(filepath.Join(cfg.BasePath, s.RecordsDir))
-	if err != nil {
-		return err
-	}
-
-	rt, err := loadRuntime(s)
-	if err != nil {
-		return err
-	}
-
-	var driftIssues []map[string]any
-	var tamperIssues []map[string]any
-
-	for _, doc := range docs {
-		if err := doc.EnsureLoaded(); err != nil {
-			continue
-		}
-
-		// Re-evaluate virtuals so hashes match what save() produced
-		if rt != nil && len(s.Virtuals) > 0 {
-			vResults, vErr := rt.EvaluateAll(doc.Content, doc.Data)
-			if vErr == nil {
-				doc.SetVirtuals(vResults)
-			}
-		}
-
-		id := doc.ID()
-
-		// Check drift: compare frontmatter vs record for scalar fields
-		drifts := checkDrift(s, doc)
-		driftIssues = append(driftIssues, drifts...)
-
-		// Check integrity
-		entry, ok := manifest.Entries[id]
-		if !ok {
-			continue
-		}
-
-		fmData := schemapkg.BuildFrontmatterData(s, doc.Data, doc.Virtuals())
-		recordData := schemapkg.BuildRecordData(s, doc.Data, doc.Virtuals())
-		recordData["file"] = doc.RelativeFilePath()
-
-		tc := integrity.Verify(entry,
-			integrity.HashContent(doc.Content),
-			integrity.HashFrontmatter(fmData),
-			integrity.HashRecord(recordData),
-		)
-		if tc != nil {
-			tamperIssues = append(tamperIssues, map[string]any{
-				"kind":       "tamper",
-				"id":         id,
-				"file":       doc.RelativeFilePath(),
-				"mismatched": tc.Mismatched,
-			})
-		}
-	}
-
-	result := map[string]any{
-		"drift_count":  len(driftIssues),
-		"tamper_count": len(tamperIssues),
-		"drift":        driftIssues,
-		"tamper":       tamperIssues,
-	}
-
-	if err := output.PrintData(format, result); err != nil {
-		return err
-	}
-
-	hasDrift := len(driftIssues) > 0
-	hasTamper := len(tamperIssues) > 0
-
-	if hasDrift && hasTamper {
-		os.Exit(7)
-	} else if hasTamper {
-		os.Exit(6)
-	} else if hasDrift {
-		os.Exit(4)
-	}
-
 	return nil
 }
 
-func checkDrift(s *schemapkg.Schema, doc *document.Document) []map[string]any {
-	recordsDir := filepath.Join(doc.BasePath, s.RecordsDir)
-	records, err := storage.LoadAllPartitions(recordsDir, s.Partition)
+func scopedDocPaths(basePath, docsDir string, all bool) ([]string, error) {
+	if all {
+		return collectMDsFromWalker(docsDir)
+	}
+	scope, err := integrity.NewGitScope(basePath)
 	if err != nil {
-		return nil
+		return nil, err
 	}
-
-	// Find the record matching this doc
-	id := doc.ID()
-	var rec map[string]any
-	for _, r := range records {
-		if fmt.Sprintf("%v", r[s.IDField]) == id {
-			rec = r
-			break
-		}
+	if !scope.IsRepo {
+		fmt.Fprintln(os.Stderr, "not a git repo; falling back to --all")
+		return collectMDsFromWalker(docsDir)
 	}
-	if rec == nil {
-		return nil
-	}
-
-	var issues []map[string]any
-	for name, f := range s.Fields {
-		if !f.Type.IsScalar() {
+	var out []string
+	for _, p := range scope.PairScopedPaths() {
+		if !strings.HasSuffix(p, ".md") {
 			continue
 		}
-		fmVal := doc.Data[name]
-		recVal := rec[name]
-		if fmt.Sprintf("%v", fmVal) != fmt.Sprintf("%v", recVal) {
-			issues = append(issues, map[string]any{
-				"kind":        "drift",
-				"id":          id,
-				"field":       name,
-				"frontmatter": fmVal,
-				"record":      recVal,
-			})
+		if !strings.HasPrefix(p, docsDir+string(filepath.Separator)) && p != docsDir {
+			continue
 		}
+		out = append(out, p)
 	}
-	return issues
+	return out, nil
+}
+
+func collectMDsFromWalker(docsDir string) ([]string, error) {
+	docs, err := storage.WalkDocsToSlice(docsDir)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(docs))
+	for _, d := range docs {
+		out = append(out, d.Path)
+	}
+	return out, nil
+}
+
+func scopeLabel(all bool) string {
+	if all {
+		return "all"
+	}
+	return "uncommitted"
+}
+
+func checkOneDoc(s *schemapkg.Schema, basePath, mdPath string, key []byte) map[string]any {
+	mdExists := fileExists(mdPath)
+	sc, err := integrity.LoadSidecar(mdPath)
+	switch {
+	case !mdExists && err == nil:
+		return map[string]any{"file": relPath(basePath, mdPath), "drift": "missing-md"}
+	case mdExists && os.IsNotExist(err):
+		return map[string]any{"file": relPath(basePath, mdPath), "drift": "missing-sidecar"}
+	case err != nil && !os.IsNotExist(err):
+		return map[string]any{"file": relPath(basePath, mdPath), "drift": "sidecar-parse-error", "error": err.Error()}
+	case err != nil:
+		// covered above; safety
+		return nil
+	}
+
+	fm, body, perr := storage.ParseMarkdown(mdPath)
+	if perr != nil {
+		return map[string]any{"file": relPath(basePath, mdPath), "drift": "md-parse-error", "error": perr.Error()}
+	}
+	rec := schemapkg.BuildRecordData(s, fm, nil)
+	if rel, e := filepath.Rel(basePath, mdPath); e == nil {
+		rec["file"] = rel
+	}
+	d, _ := sc.Verify(mdPath, fm, body, rec, key)
+	if !d.Any() {
+		return nil
+	}
+	causes := []string{}
+	if d.ContentDrift {
+		causes = append(causes, "content_sha mismatch")
+	}
+	if d.FrontmatterDrift {
+		causes = append(causes, "frontmatter_sha mismatch")
+	}
+	if d.RecordDrift {
+		causes = append(causes, "record_sha mismatch")
+	}
+	if d.BadSig {
+		causes = append(causes, "bad_sig")
+	}
+	return map[string]any{
+		"file":   relPath(basePath, mdPath),
+		"drift":  "tamper",
+		"causes": causes,
+	}
+}
+
+func relPath(base, path string) string {
+	if rel, err := filepath.Rel(base, path); err == nil {
+		return rel
+	}
+	return path
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
 }
 
 func runDoctorFix(cmd *cobra.Command, _ []string) error {
@@ -219,38 +230,27 @@ func runDoctorFix(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-
 	s, err := loadSchema(cfg)
 	if err != nil {
 		return err
 	}
-
-	format := outputFormat(cfg)
-	qs := query.NewQuerySet(s, cfg.BasePath)
-
-	docs, err := qs.All()
+	docsDir := filepath.Join(cfg.BasePath, s.DocsDir)
+	paths, err := scopedDocPaths(cfg.BasePath, docsDir, doctorAll)
 	if err != nil {
 		return err
 	}
-
-	rt, err := loadRuntime(s)
-	if err != nil {
-		return err
-	}
+	key, _ := integrity.LoadKey()
 
 	fixed := 0
-	for _, doc := range docs {
-		if err := doc.EnsureLoaded(); err != nil {
-			continue
-		}
-		if err := doc.Save(rt); err != nil {
-			return fmt.Errorf("fixing %s: %w", doc.ID(), err)
+	for _, mdPath := range paths {
+		if err := writeSidecarFromMD(s, cfg.BasePath, mdPath, key, false); err != nil {
+			return err
 		}
 		fixed++
 	}
-
-	return output.PrintData(format, map[string]any{
-		"action": "fix",
+	return output.PrintData(outputFormat(cfg), map[string]any{
+		"action": "doctor.fix",
+		"scope":  scopeLabel(doctorAll),
 		"fixed":  fixed,
 	})
 }
@@ -260,86 +260,172 @@ func runDoctorSign(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-
 	s, err := loadSchema(cfg)
 	if err != nil {
 		return err
 	}
-
-	format := outputFormat(cfg)
-
-	if !doctorSignForce {
-		output.PrintError(format, "CONFIRMATION_REQUIRED",
-			"use --force to re-sign entries from current on-disk state", nil)
-		os.Exit(1)
-	}
-
-	recordsDir := filepath.Join(cfg.BasePath, s.RecordsDir)
-	manifest, err := integrity.LoadManifest(recordsDir)
-	if err != nil {
-		return err
-	}
-
 	key, err := integrity.LoadKey()
 	if err != nil {
 		return err
 	}
+	if key == nil {
+		keyErr := fmt.Errorf("sign requires an HMAC key; run sbdb doctor init-key")
+		fmt.Fprintln(os.Stderr, keyErr)
+		return keyErr
+	}
 
-	qs := query.NewQuerySet(s, cfg.BasePath)
-	docs, err := qs.All()
+	docsDir := filepath.Join(cfg.BasePath, s.DocsDir)
+	paths, err := scopedDocPaths(cfg.BasePath, docsDir, doctorAll)
 	if err != nil {
 		return err
 	}
 
-	rt, rtErr := loadRuntime(s)
-
 	signed := 0
-	for _, doc := range docs {
-		id := doc.ID()
-		if doctorSignID != "" && id != doctorSignID {
-			continue
+	for _, mdPath := range paths {
+		if err := writeSidecarFromMD(s, cfg.BasePath, mdPath, key, true); err != nil {
+			return err
 		}
-
-		if err := doc.EnsureLoaded(); err != nil {
-			continue
-		}
-
-		// Re-evaluate virtuals from current content so hashes are correct
-		if rtErr == nil && rt != nil && len(s.Virtuals) > 0 {
-			vResults, vErr := rt.EvaluateAll(doc.Content, doc.Data)
-			if vErr == nil {
-				doc.SetVirtuals(vResults)
-			}
-		}
-
-		fmData := schemapkg.BuildFrontmatterData(s, doc.Data, doc.Virtuals())
-		recordData := schemapkg.BuildRecordData(s, doc.Data, doc.Virtuals())
-		recordData["file"] = doc.RelativeFilePath()
-
-		entry := &integrity.Entry{
-			File:           doc.RelativeFilePath(),
-			ContentSHA:     integrity.HashContent(doc.Content),
-			FrontmatterSHA: integrity.HashFrontmatter(fmData),
-			RecordSHA:      integrity.HashRecord(recordData),
-		}
-
-		if key != nil {
-			entry.Sig = integrity.SignEntry(entry, key)
-			manifest.HMAC = true
-		}
-
-		manifest.SetEntry(id, entry)
 		signed++
 	}
+	return output.PrintData(outputFormat(cfg), map[string]any{
+		"action": "doctor.sign",
+		"scope":  scopeLabel(doctorAll),
+		"signed": signed,
+	})
+}
 
-	if err := manifest.Save(recordsDir); err != nil {
+// writeSidecarFromMD parses mdPath, recomputes hashes, and writes a fresh
+// sidecar. If requireKey is true, key must be non-nil and the sidecar is
+// HMAC-signed; otherwise signing is best-effort.
+func writeSidecarFromMD(s *schemapkg.Schema, basePath, mdPath string, key []byte, requireKey bool) error {
+	fm, body, err := storage.ParseMarkdown(mdPath)
+	if err != nil {
+		return fmt.Errorf("parsing %s: %w", mdPath, err)
+	}
+	rec := schemapkg.BuildRecordData(s, fm, nil)
+	if rel, e := filepath.Rel(basePath, mdPath); e == nil {
+		rec["file"] = rel
+	}
+	sc := &integrity.Sidecar{
+		Version:        1,
+		Algo:           "sha256",
+		File:           filepath.Base(mdPath),
+		ContentSHA:     integrity.HashContent(body),
+		FrontmatterSHA: integrity.HashFrontmatter(fm),
+		RecordSHA:      integrity.HashRecord(rec),
+	}
+	if key != nil {
+		sc.HMAC = true
+		sc.Sig = sc.SignWith(key)
+	} else if requireKey {
+		return fmt.Errorf("sign requires an HMAC key")
+	}
+	return sc.Save(mdPath)
+}
+
+func runDoctorMigrate(cmd *cobra.Command, _ []string) error {
+	cfg, err := resolveConfig()
+	if err != nil {
 		return err
 	}
 
-	return output.PrintData(format, map[string]any{
-		"action": "sign",
-		"signed": signed,
+	dataDir := filepath.Join(cfg.BasePath, "data")
+	if _, err := os.Stat(dataDir); os.IsNotExist(err) {
+		return output.PrintData(outputFormat(cfg), map[string]any{
+			"action": "doctor.migrate",
+			"result": "already-v2",
+		})
+	}
+
+	schemas, err := loadAllSchemas(cfg)
+	if err != nil {
+		return err
+	}
+
+	migrated := 0
+	for _, s := range schemas {
+		if s.RecordsDir == "" {
+			continue
+		}
+		recordsDir := filepath.Join(cfg.BasePath, s.RecordsDir)
+		if _, err := os.Stat(recordsDir); os.IsNotExist(err) {
+			continue
+		}
+
+		records, err := storage.LoadAllPartitions(recordsDir, s.Partition)
+		if err != nil {
+			return fmt.Errorf("loading legacy records for %s: %w", s.Entity, err)
+		}
+		manifest, mErr := integrity.LoadManifest(recordsDir)
+		if mErr != nil {
+			return fmt.Errorf("loading legacy manifest for %s: %w", s.Entity, mErr)
+		}
+
+		for _, rec := range records {
+			id := fmt.Sprintf("%v", rec[s.IDField])
+			file, _ := rec["file"].(string)
+			if file == "" {
+				continue
+			}
+			mdPath := filepath.Join(cfg.BasePath, file)
+			entry := manifest.Entries[id]
+			sc := buildSidecarFromV1(rec, entry, mdPath)
+			if doctorMigrateDryRun {
+				continue
+			}
+			if err := sc.Save(mdPath); err != nil {
+				return fmt.Errorf("writing sidecar for %s: %w", id, err)
+			}
+			migrated++
+		}
+	}
+
+	if !doctorMigrateDryRun {
+		if err := os.RemoveAll(dataDir); err != nil {
+			return fmt.Errorf("removing legacy data/: %w", err)
+		}
+	}
+
+	return output.PrintData(outputFormat(cfg), map[string]any{
+		"action":   "doctor.migrate",
+		"migrated": migrated,
+		"dry_run":  doctorMigrateDryRun,
 	})
+}
+
+// buildSidecarFromV1 converts a legacy records.yaml + manifest entry to a
+// v2 per-doc Sidecar. If the manifest has no entry for this id, the sidecar
+// is rebuilt by recomputing hashes from the on-disk markdown.
+func buildSidecarFromV1(rec map[string]any, entry *integrity.Entry, mdPath string) *integrity.Sidecar {
+	sc := &integrity.Sidecar{
+		Version: 1, Algo: "sha256",
+		File: filepath.Base(mdPath),
+	}
+	if entry != nil {
+		sc.ContentSHA = entry.ContentSHA
+		sc.FrontmatterSHA = entry.FrontmatterSHA
+		sc.RecordSHA = entry.RecordSHA
+		sc.Sig = entry.Sig
+		sc.HMAC = entry.Sig != ""
+		sc.UpdatedAt = entry.UpdatedAt
+		sc.Writer = entry.Writer
+		return sc
+	}
+	// Rebuild from disk if no manifest entry.
+	fm, body, err := storage.ParseMarkdown(mdPath)
+	if err == nil {
+		// Normalise the legacy `file` field to OS-native separators so the
+		// migrated sidecar's record_sha matches what `doctor check` recomputes
+		// later (which derives `file` via filepath.Rel — backslashes on
+		// Windows). Without this, post-migrate verification fails on Windows.
+		if f, ok := rec["file"].(string); ok && f != "" {
+			rec["file"] = filepath.FromSlash(f)
+		}
+		sc.ContentSHA = integrity.HashContent(body)
+		sc.FrontmatterSHA = integrity.HashFrontmatter(fm)
+		sc.RecordSHA = integrity.HashRecord(rec)
+	}
+	return sc
 }
 
 func runDoctorStatus(cmd *cobra.Command, _ []string) error {

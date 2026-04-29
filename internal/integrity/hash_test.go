@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 func TestHashContent(t *testing.T) {
@@ -78,9 +79,11 @@ func TestManifestExists(t *testing.T) {
 	dir := t.TempDir()
 	assert.False(t, ManifestExists(dir))
 
-	// Create manifest
+	// Write a manifest file directly to exercise ManifestExists without Save.
 	m := &Manifest{Version: 1, Algo: "sha256", Entries: map[string]*Entry{}}
-	require.NoError(t, m.Save(dir))
+	data, err := yaml.Marshal(m)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(ManifestPath(dir), data, 0o644))
 	assert.True(t, ManifestExists(dir))
 }
 

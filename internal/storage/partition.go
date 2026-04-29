@@ -9,29 +9,6 @@ import (
 	"time"
 )
 
-// RecordsPathForPartition returns the YAML file path for a record based on partition mode.
-// For "none": returns recordsDir/records.yaml
-// For "monthly": returns recordsDir/YYYY-MM.yaml based on the date field value.
-func RecordsPathForPartition(recordsDir, partition, dateField string, record map[string]any) (string, error) {
-	if partition == "" || partition == "none" {
-		return filepath.Join(recordsDir, "records.yaml"), nil
-	}
-
-	if partition == "monthly" {
-		dateVal, ok := record[dateField]
-		if !ok {
-			return "", fmt.Errorf("record missing date field %q for monthly partition", dateField)
-		}
-		t, err := parseDate(dateVal)
-		if err != nil {
-			return "", fmt.Errorf("parsing date field %q: %w", dateField, err)
-		}
-		return filepath.Join(recordsDir, t.Format("2006-01")+".yaml"), nil
-	}
-
-	return "", fmt.Errorf("unknown partition mode: %q", partition)
-}
-
 // LoadAllPartitions reads all YAML record files from a directory and merges them.
 // For "none" partition, reads just records.yaml.
 // For "monthly", reads all YYYY-MM.yaml files and merges them.
@@ -81,25 +58,4 @@ func loadMonthlyPartitions(dir string) ([]map[string]any, error) {
 	}
 
 	return all, nil
-}
-
-func parseDate(v any) (time.Time, error) {
-	switch val := v.(type) {
-	case string:
-		// Try common formats
-		for _, layout := range []string{
-			"2006-01-02",
-			"2006-01-02T15:04:05Z07:00",
-			time.RFC3339,
-		} {
-			if t, err := time.Parse(layout, val); err == nil {
-				return t, nil
-			}
-		}
-		return time.Time{}, fmt.Errorf("cannot parse date string %q", val)
-	case time.Time:
-		return val, nil
-	default:
-		return time.Time{}, fmt.Errorf("unexpected date type %T", v)
-	}
 }

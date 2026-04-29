@@ -344,18 +344,16 @@ virtuals:
 	assert.True(t, stats.Edges >= 9, "should have at least 9 link edges (chain)")
 	assert.True(t, stats.Chunks > 0)
 
-	// VERIFY integrity
+	// VERIFY integrity via sidecars
 	for _, doc := range docs {
 		loaded, err := document.LoadFromFile(s, basePath, doc.FilePath())
 		require.NoError(t, err)
 		assert.Equal(t, doc.ID(), loaded.ID())
 
-		// Verify integrity manifest matches
-		manifest, err := integrity.LoadManifest(filepath.Join(basePath, s.RecordsDir))
-		require.NoError(t, err)
-		entry, ok := manifest.Entries[doc.ID()]
-		require.True(t, ok, "manifest should have entry for %s", doc.ID())
-		assert.NotEmpty(t, entry.ContentSHA)
+		// Verify sidecar exists and has content SHA
+		sc, err := integrity.LoadSidecar(doc.FilePath())
+		require.NoError(t, err, "sidecar should exist for %s", doc.ID())
+		assert.NotEmpty(t, sc.ContentSHA)
 	}
 
 	// UPDATE 3 docs
@@ -370,14 +368,13 @@ virtuals:
 	stats2, _ := db.Stats()
 	assert.Equal(t, 10, stats2.Nodes, "update shouldn't change node count")
 
-	// Verify records.yaml reflects updates
-	records, err := storage.LoadRecords(filepath.Join(basePath, "data", "notes", "records.yaml"))
-	require.NoError(t, err)
-	assert.Len(t, records, 10)
-
+	// Verify frontmatter reflects updates
 	archivedCount := 0
-	for _, r := range records {
-		if r["status"] == "archived" {
+	for i := 0; i < 10; i++ {
+		mdPath := filepath.Join(basePath, "docs", "notes", fmt.Sprintf("note-%d.md", i))
+		fm, _, ferr := storage.ParseMarkdown(mdPath)
+		require.NoError(t, ferr)
+		if fm["status"] == "archived" {
 			archivedCount++
 		}
 	}
@@ -392,20 +389,16 @@ virtuals:
 	stats3, _ := db.Stats()
 	assert.Equal(t, 8, stats3.Nodes)
 
-	records, _ = storage.LoadRecords(filepath.Join(basePath, "data", "notes", "records.yaml"))
-	assert.Len(t, records, 8)
-
-	// VERIFY all remaining docs still pass integrity
-	manifest, _ := integrity.LoadManifest(filepath.Join(basePath, s.RecordsDir))
+	// VERIFY remaining docs still have sidecars, deleted ones do not
 	for i := 0; i < 8; i++ {
-		id := fmt.Sprintf("note-%d", i)
-		_, ok := manifest.Entries[id]
-		assert.True(t, ok, "manifest should still have %s", id)
+		mdPath := filepath.Join(basePath, "docs", "notes", fmt.Sprintf("note-%d.md", i))
+		_, err := integrity.LoadSidecar(mdPath)
+		assert.NoError(t, err, "sidecar should still exist for note-%d", i)
 	}
 	for i := 8; i < 10; i++ {
-		id := fmt.Sprintf("note-%d", i)
-		_, ok := manifest.Entries[id]
-		assert.False(t, ok, "manifest should NOT have deleted %s", id)
+		mdPath := filepath.Join(basePath, "docs", "notes", fmt.Sprintf("note-%d.md", i))
+		_, err := integrity.LoadSidecar(mdPath)
+		assert.True(t, os.IsNotExist(err), "sidecar should be gone for deleted note-%d", i)
 	}
 }
 
