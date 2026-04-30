@@ -7,11 +7,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/sergio-bershadsky/secondbrain-db/internal/integrity"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/output"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/schema"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/storage"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/untracked"
+	"github.com/sergio-bershadsky/secondbrain-db/internal/cli/output"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/integrity"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/schema"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/storage"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/untracked"
 )
 
 var untrackedCmd = &cobra.Command{

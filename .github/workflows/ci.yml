@@ -123,7 +123,7 @@ jobs:
       - name: Stress events package
         env:
           CGO_ENABLED: "1"
-        run: go test ./internal/events/... -race -count=20 -timeout=15m
+        run: go test ./pkg/sbdb/events/... -race -count=20 -timeout=15m
 
   coverage:
     name: Coverage

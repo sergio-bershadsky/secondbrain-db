@@ -39,3 +39,4 @@ integrity.key
 
 # Semantic index (large binary files)
 .index/
+.claude/

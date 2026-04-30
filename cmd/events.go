@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/sergio-bershadsky/secondbrain-db/internal/events"
-	schemapkg "github.com/sergio-bershadsky/secondbrain-db/internal/schema"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/events"
+	schemapkg "github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/schema"
 )
 
 var eventsCmd = &cobra.Command{

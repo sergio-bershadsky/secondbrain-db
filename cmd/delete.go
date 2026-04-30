@@ -1,14 +1,16 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 
-	"github.com/sergio-bershadsky/secondbrain-db/internal/document"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/output"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/query"
+	"github.com/sergio-bershadsky/secondbrain-db/internal/cli/output"
+	clir "github.com/sergio-bershadsky/secondbrain-db/internal/cli/runtime"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb"
 )
 
 var (
@@ -32,27 +34,23 @@ func init() {
 }
 
 func runDelete(cmd *cobra.Command, _ []string) error {
-	cfg, err := resolveConfig()
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	db, cfg, err := clir.OpenDB(ctx, flagBasePath, flagSchemaDir, flagSchema, flagFormat)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	repo, err := db.RepoErr(cfg.DefaultSchema)
 	if err != nil {
 		return err
 	}
 
-	s, err := loadSchema(cfg)
-	if err != nil {
-		return err
-	}
-
-	format := outputFormat(cfg)
-
-	qs := query.NewQuerySet(s, cfg.BasePath)
-	doc, err := qs.Get(map[string]any{s.IDField: deleteID})
-	if err != nil {
-		if _, ok := err.(*document.NotFoundError); ok {
-			output.PrintError(format, "NOT_FOUND", err.Error(), nil)
-			os.Exit(2)
-		}
-		return err
-	}
+	format := clir.OutputFormat(cfg)
 
 	if !deleteYes {
 		output.PrintError(format, "CONFIRMATION_REQUIRED",
@@ -67,30 +65,30 @@ func runDelete(cmd *cobra.Command, _ []string) error {
 	}
 
 	if deleteSoft {
-		if err := doc.EnsureLoaded(); err != nil {
-			return err
-		}
-		doc.Set("status", "archived")
-		rt, err := loadRuntime(s)
+		saved, err := repo.Update(ctx, deleteID, func(d sbdb.Doc) sbdb.Doc {
+			if d.Frontmatter == nil {
+				d.Frontmatter = make(map[string]any)
+			}
+			d.Frontmatter["status"] = "archived"
+			return d
+		})
 		if err != nil {
 			return err
 		}
-		if err := doc.Save(rt); err != nil {
-			return err
-		}
-		return output.PrintData(format, map[string]any{
-			"action": "soft_delete", "id": deleteID, "status": "archived",
+		return clir.PrintData(cfg, map[string]any{
+			"action": "soft_delete", "id": saved.ID, "status": "archived",
 		})
 	}
 
-	if err := doc.EnsureLoaded(); err != nil {
-		return err
-	}
-	if err := doc.Delete(); err != nil {
+	if err := repo.Delete(ctx, deleteID); err != nil {
+		if errors.Is(err, sbdb.ErrNotFound) {
+			output.PrintError(format, "NOT_FOUND", err.Error(), nil)
+			os.Exit(2)
+		}
 		return err
 	}
 
-	return output.PrintData(format, map[string]any{
+	return clir.PrintData(cfg, map[string]any{
 		"action": "deleted", "id": deleteID,
 	})
 }
