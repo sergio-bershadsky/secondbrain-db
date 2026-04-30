@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.0](https://github.com/sergio-bershadsky/secondbrain-db/compare/v2.0.0...v2.1.0) (2026-04-30)
+
+
+### Features
+
+* embeddable Go library at pkg/sbdb ([#41](https://github.com/sergio-bershadsky/secondbrain-db/issues/41)) ([7955bff](https://github.com/sergio-bershadsky/secondbrain-db/commit/7955bff9fe77a3950fc0d540d296bba73826b599))
+
 ## [2.0.0](https://github.com/sergio-bershadsky/secondbrain-db/compare/v1.3.1...v2.0.0) (2026-04-29)
 
 
