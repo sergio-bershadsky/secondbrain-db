@@ -2,26 +2,7 @@ package cmd
 
 import (
 	"testing"
-
-	"github.com/sergio-bershadsky/secondbrain-db/internal/document"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/schema"
 )
-
-// minimalSchema returns a bare Schema sufficient to construct a Document.
-func minimalSchema() *schema.Schema {
-	return &schema.Schema{
-		Entity:     "test",
-		DocsDir:    "docs",
-		RecordsDir: "records",
-		Filename:   "{id}.md",
-		IDField:    "id",
-		Fields:     schema.FieldMap{},
-	}
-}
-
-func newTestDoc() *document.Document {
-	return document.New(minimalSchema(), "/tmp/testdb")
-}
 
 // ---------------------------------------------------------------------------
 // parseFieldValue
@@ -161,29 +142,28 @@ func TestParseKVPairs(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// applyFieldUpdate
+// applyFieldToMap
 // ---------------------------------------------------------------------------
 
-func TestApplyFieldUpdate(t *testing.T) {
+func TestApplyFieldToMap(t *testing.T) {
 	t.Run("set x=42", func(t *testing.T) {
-		doc := newTestDoc()
-		if err := applyFieldUpdate(doc, "x=42"); err != nil {
+		m := map[string]any{}
+		if err := applyFieldToMap(m, "x=42"); err != nil {
 			t.Fatal(err)
 		}
-		if i, ok := doc.Data["x"].(int); !ok || i != 42 {
-			t.Errorf("want int(42), got %T(%v)", doc.Data["x"], doc.Data["x"])
+		if i, ok := m["x"].(int); !ok || i != 42 {
+			t.Errorf("want int(42), got %T(%v)", m["x"], m["x"])
 		}
 	})
 
 	t.Run("append to existing list", func(t *testing.T) {
-		doc := newTestDoc()
-		doc.Data["x"] = []any{2}
-		if err := applyFieldUpdate(doc, "x+=1"); err != nil {
+		m := map[string]any{"x": []any{2}}
+		if err := applyFieldToMap(m, "x+=1"); err != nil {
 			t.Fatal(err)
 		}
-		sl, ok := doc.Data["x"].([]any)
+		sl, ok := m["x"].([]any)
 		if !ok || len(sl) != 2 {
-			t.Fatalf("want []any of len 2, got %T(%v)", doc.Data["x"], doc.Data["x"])
+			t.Fatalf("want []any of len 2, got %T(%v)", m["x"], m["x"])
 		}
 		if i, ok := sl[1].(int); !ok || i != 1 {
 			t.Errorf("appended element: want int(1), got %T(%v)", sl[1], sl[1])
@@ -191,20 +171,19 @@ func TestApplyFieldUpdate(t *testing.T) {
 	})
 
 	t.Run("append to nil/missing creates list", func(t *testing.T) {
-		doc := newTestDoc()
-		if err := applyFieldUpdate(doc, "x+=1"); err != nil {
+		m := map[string]any{}
+		if err := applyFieldToMap(m, "x+=1"); err != nil {
 			t.Fatal(err)
 		}
-		sl, ok := doc.Data["x"].([]any)
+		sl, ok := m["x"].([]any)
 		if !ok || len(sl) != 1 {
-			t.Fatalf("want []any{1}, got %T(%v)", doc.Data["x"], doc.Data["x"])
+			t.Fatalf("want []any{1}, got %T(%v)", m["x"], m["x"])
 		}
 	})
 
 	t.Run("append to non-list errors", func(t *testing.T) {
-		doc := newTestDoc()
-		doc.Data["x"] = "oops"
-		err := applyFieldUpdate(doc, "x+=1")
+		m := map[string]any{"x": "oops"}
+		err := applyFieldToMap(m, "x+=1")
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -214,14 +193,13 @@ func TestApplyFieldUpdate(t *testing.T) {
 	})
 
 	t.Run("remove from list", func(t *testing.T) {
-		doc := newTestDoc()
-		doc.Data["x"] = []any{1, 2, 3}
-		if err := applyFieldUpdate(doc, "x-=2"); err != nil {
+		m := map[string]any{"x": []any{1, 2, 3}}
+		if err := applyFieldToMap(m, "x-=2"); err != nil {
 			t.Fatal(err)
 		}
-		sl, ok := doc.Data["x"].([]any)
+		sl, ok := m["x"].([]any)
 		if !ok {
-			t.Fatalf("want []any, got %T", doc.Data["x"])
+			t.Fatalf("want []any, got %T", m["x"])
 		}
 		if len(sl) != 2 {
 			t.Fatalf("want 2 elements after remove, got %d: %v", len(sl), sl)
@@ -234,9 +212,8 @@ func TestApplyFieldUpdate(t *testing.T) {
 	})
 
 	t.Run("remove from non-list errors", func(t *testing.T) {
-		doc := newTestDoc()
-		doc.Data["x"] = "scalar"
-		err := applyFieldUpdate(doc, "x-=2")
+		m := map[string]any{"x": "scalar"}
+		err := applyFieldToMap(m, "x-=2")
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -246,19 +223,18 @@ func TestApplyFieldUpdate(t *testing.T) {
 	})
 
 	t.Run("delete with ~=", func(t *testing.T) {
-		doc := newTestDoc()
-		doc.Data["x"] = "something"
-		if err := applyFieldUpdate(doc, "x~=anything"); err != nil {
+		m := map[string]any{"x": "something"}
+		if err := applyFieldToMap(m, "x~=anything"); err != nil {
 			t.Fatal(err)
 		}
-		if _, exists := doc.Data["x"]; exists {
+		if _, exists := m["x"]; exists {
 			t.Error("key x should have been deleted")
 		}
 	})
 
 	t.Run("malformed (no =) errors", func(t *testing.T) {
-		doc := newTestDoc()
-		err := applyFieldUpdate(doc, "malformed")
+		m := map[string]any{}
+		err := applyFieldToMap(m, "malformed")
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -269,60 +245,56 @@ func TestApplyFieldUpdate(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// appendToList / removeFromList (direct)
+// appendToMap / removeFromMap (direct)
 // ---------------------------------------------------------------------------
 
-func TestAppendToList(t *testing.T) {
+func TestAppendToMap(t *testing.T) {
 	t.Run("append to []any", func(t *testing.T) {
-		doc := newTestDoc()
-		doc.Data["tags"] = []any{"a"}
-		if err := appendToList(doc, "tags", "b"); err != nil {
+		m := map[string]any{"tags": []any{"a"}}
+		if err := appendToMap(m, "tags", "b"); err != nil {
 			t.Fatal(err)
 		}
-		sl := doc.Data["tags"].([]any)
+		sl := m["tags"].([]any)
 		if len(sl) != 2 || sl[1] != "b" {
 			t.Errorf("unexpected result: %v", sl)
 		}
 	})
 
 	t.Run("append to nil creates list", func(t *testing.T) {
-		doc := newTestDoc()
-		if err := appendToList(doc, "tags", "x"); err != nil {
+		m := map[string]any{}
+		if err := appendToMap(m, "tags", "x"); err != nil {
 			t.Fatal(err)
 		}
-		sl := doc.Data["tags"].([]any)
+		sl := m["tags"].([]any)
 		if len(sl) != 1 || sl[0] != "x" {
 			t.Errorf("unexpected result: %v", sl)
 		}
 	})
 
 	t.Run("append to non-list errors", func(t *testing.T) {
-		doc := newTestDoc()
-		doc.Data["tags"] = "not-a-list"
-		err := appendToList(doc, "tags", "x")
+		m := map[string]any{"tags": "not-a-list"}
+		err := appendToMap(m, "tags", "x")
 		if err == nil || !containsStr(err.Error(), "cannot append") {
 			t.Errorf("expected cannot-append error, got: %v", err)
 		}
 	})
 }
 
-func TestRemoveFromList(t *testing.T) {
+func TestRemoveFromMap(t *testing.T) {
 	t.Run("removes matching element", func(t *testing.T) {
-		doc := newTestDoc()
-		doc.Data["tags"] = []any{"a", "b", "c"}
-		if err := removeFromList(doc, "tags", "b"); err != nil {
+		m := map[string]any{"tags": []any{"a", "b", "c"}}
+		if err := removeFromMap(m, "tags", "b"); err != nil {
 			t.Fatal(err)
 		}
-		sl := doc.Data["tags"].([]any)
+		sl := m["tags"].([]any)
 		if len(sl) != 2 {
 			t.Errorf("expected 2 elements, got %d: %v", len(sl), sl)
 		}
 	})
 
 	t.Run("error on non-list", func(t *testing.T) {
-		doc := newTestDoc()
-		doc.Data["tags"] = 42
-		err := removeFromList(doc, "tags", "x")
+		m := map[string]any{"tags": 42}
+		err := removeFromMap(m, "tags", "x")
 		if err == nil || !containsStr(err.Error(), "cannot remove") {
 			t.Errorf("expected cannot-remove error, got: %v", err)
 		}

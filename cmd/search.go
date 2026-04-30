@@ -7,11 +7,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/sergio-bershadsky/secondbrain-db/internal/config"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/kg"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/output"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/query"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/semantic"
+	"github.com/sergio-bershadsky/secondbrain-db/internal/cli/output"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/config"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/kg"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/query"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/semantic"
 )
 
 var (

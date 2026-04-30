@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -9,9 +11,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/sergio-bershadsky/secondbrain-db/internal/document"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/output"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/query"
+	"github.com/sergio-bershadsky/secondbrain-db/internal/cli/output"
+	clir "github.com/sergio-bershadsky/secondbrain-db/internal/cli/runtime"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb"
 )
 
 var (
@@ -37,118 +39,130 @@ func init() {
 }
 
 func runUpdate(cmd *cobra.Command, _ []string) error {
-	cfg, err := resolveConfig()
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	db, cfg, err := clir.OpenDB(ctx, flagBasePath, flagSchemaDir, flagSchema, flagFormat)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	repo, err := db.RepoErr(cfg.DefaultSchema)
 	if err != nil {
 		return err
 	}
 
-	s, err := loadSchema(cfg)
-	if err != nil {
-		return err
+	// Capture flag state for the mutator closure.
+	inputFile := updateInput
+	contentFile := updateContentFile
+	fields := updateFields
+
+	format := clir.OutputFormat(cfg)
+
+	if flagDryRun {
+		cur, err := repo.Get(ctx, updateID)
+		if err != nil {
+			if errors.Is(err, sbdb.ErrNotFound) {
+				output.PrintError(format, "NOT_FOUND", err.Error(), nil)
+				os.Exit(2)
+			}
+			return err
+		}
+		d := applyDocUpdates(cur, inputFile, contentFile, fields)
+		return clir.PrintData(cfg, map[string]any{"action": "update", "id": updateID, "data": d.Frontmatter})
 	}
 
-	format := outputFormat(cfg)
-
-	// Load existing document
-	qs := query.NewQuerySet(s, cfg.BasePath)
-	doc, err := qs.Get(map[string]any{s.IDField: updateID})
+	saved, err := repo.Update(ctx, updateID, func(d sbdb.Doc) sbdb.Doc {
+		return applyDocUpdates(d, inputFile, contentFile, fields)
+	})
 	if err != nil {
-		if _, ok := err.(*document.NotFoundError); ok {
+		if errors.Is(err, sbdb.ErrNotFound) {
 			output.PrintError(format, "NOT_FOUND", err.Error(), nil)
 			os.Exit(2)
 		}
 		return err
 	}
+	return clir.PrintData(cfg, map[string]any{
+		"action":      "update",
+		"id":          saved.ID,
+		"frontmatter": saved.Frontmatter,
+	})
+}
 
-	if err := doc.EnsureLoaded(); err != nil {
-		return err
+// applyDocUpdates merges --input, --field, and --content-file into d and
+// returns the modified Doc. All errors inside are logged to stderr and skipped
+// to match the original "apply best-effort" behaviour.
+func applyDocUpdates(d sbdb.Doc, inputFile, contentFile string, fields []string) sbdb.Doc {
+	if d.Frontmatter == nil {
+		d.Frontmatter = make(map[string]any)
 	}
 
 	// Merge from --input
-	if updateInput != "" {
+	if inputFile != "" {
 		var reader io.Reader
-		if updateInput == "-" {
+		if inputFile == "-" {
 			reader = os.Stdin
 		} else {
-			f, err := os.Open(updateInput)
-			if err != nil {
-				return err
+			f, err := os.Open(inputFile)
+			if err == nil {
+				defer f.Close()
+				reader = f
 			}
-			defer f.Close()
-			reader = f
 		}
-
-		raw, err := io.ReadAll(reader)
-		if err != nil {
-			return err
-		}
-
-		var payload map[string]any
-		if err := json.Unmarshal(raw, &payload); err != nil {
-			return fmt.Errorf("invalid JSON input: %w", err)
-		}
-
-		if c, ok := payload["content"]; ok {
-			doc.Content = fmt.Sprintf("%v", c)
-			delete(payload, "content")
-		}
-
-		for k, v := range payload {
-			doc.Set(k, v)
+		if reader != nil {
+			raw, err := io.ReadAll(reader)
+			if err == nil {
+				var payload map[string]any
+				if err := json.Unmarshal(raw, &payload); err == nil {
+					if c, ok := payload["content"]; ok {
+						d.Content = fmt.Sprintf("%v", c)
+						delete(payload, "content")
+					}
+					for k, v := range payload {
+						d.Frontmatter[k] = v
+					}
+				}
+			}
 		}
 	}
 
 	// Apply --field updates
-	for _, kv := range updateFields {
-		if err := applyFieldUpdate(doc, kv); err != nil {
-			return err
+	for _, kv := range fields {
+		if err := applyFieldToMap(d.Frontmatter, kv); err != nil {
+			fmt.Fprintf(os.Stderr, "update: skipping field %q: %v\n", kv, err)
 		}
 	}
 
 	// Replace content from file
-	if updateContentFile != "" {
-		raw, err := os.ReadFile(updateContentFile)
-		if err != nil {
-			return fmt.Errorf("reading content file: %w", err)
+	if contentFile != "" {
+		raw, err := os.ReadFile(contentFile)
+		if err == nil {
+			d.Content = string(raw)
 		}
-		doc.Content = string(raw)
 	}
 
-	if flagDryRun {
-		result := map[string]any{"action": "update", "id": updateID, "data": doc.AllData()}
-		return output.PrintData(format, result)
-	}
-
-	rt, err := loadRuntime(s)
-	if err != nil {
-		return err
-	}
-
-	if err := doc.Save(rt); err != nil {
-		return err
-	}
-
-	result := doc.AllData()
-	result["file"] = doc.RelativeFilePath()
-	return output.PrintData(format, result)
+	return d
 }
 
-func applyFieldUpdate(doc *document.Document, kv string) error {
-	// Check for operators: +=, -=, ~=
+// applyFieldToMap applies a single KEY[op]=VALUE string to a map[string]any.
+// Operators: += (append to list), -= (remove from list), ~= (delete key), = (set).
+func applyFieldToMap(m map[string]any, kv string) error {
 	if idx := strings.Index(kv, "+="); idx > 0 {
 		key := kv[:idx]
 		val := parseFieldValue(kv[idx+2:])
-		return appendToList(doc, key, val)
+		return appendToMap(m, key, val)
 	}
 	if idx := strings.Index(kv, "-="); idx > 0 {
 		key := kv[:idx]
 		val := fmt.Sprintf("%v", parseFieldValue(kv[idx+2:]))
-		return removeFromList(doc, key, val)
+		return removeFromMap(m, key, val)
 	}
 	if idx := strings.Index(kv, "~="); idx > 0 {
 		key := kv[:idx]
-		delete(doc.Data, key)
-		_ = kv[idx+2:] // value is ignored for delete
+		delete(m, key)
 		return nil
 	}
 
@@ -157,25 +171,27 @@ func applyFieldUpdate(doc *document.Document, kv string) error {
 	if len(parts) != 2 {
 		return fmt.Errorf("invalid --field format: %q", kv)
 	}
-	doc.Set(parts[0], parseFieldValue(parts[1]))
+	m[parts[0]] = parseFieldValue(parts[1])
 	return nil
 }
 
-func appendToList(doc *document.Document, key string, val any) error {
-	existing, _ := doc.Get(key)
+// appendToMap appends val to the list stored at key in m.
+func appendToMap(m map[string]any, key string, val any) error {
+	existing := m[key]
 	switch v := existing.(type) {
 	case []any:
-		doc.Set(key, append(v, val))
+		m[key] = append(v, val)
 	case nil:
-		doc.Set(key, []any{val})
+		m[key] = []any{val}
 	default:
 		return fmt.Errorf("cannot append to non-list field %q", key)
 	}
 	return nil
 }
 
-func removeFromList(doc *document.Document, key, val string) error {
-	existing, _ := doc.Get(key)
+// removeFromMap removes the first element matching val (as string) from the list at key.
+func removeFromMap(m map[string]any, key, val string) error {
+	existing := m[key]
 	switch v := existing.(type) {
 	case []any:
 		var result []any
@@ -184,7 +200,7 @@ func removeFromList(doc *document.Document, key, val string) error {
 				result = append(result, item)
 			}
 		}
-		doc.Set(key, result)
+		m[key] = result
 	default:
 		return fmt.Errorf("cannot remove from non-list field %q", key)
 	}

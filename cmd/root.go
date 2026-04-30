@@ -7,10 +7,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/sergio-bershadsky/secondbrain-db/internal/config"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/schema"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/version"
-	"github.com/sergio-bershadsky/secondbrain-db/internal/virtuals"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/config"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/schema"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/version"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/virtuals"
 )
 
 var (
@@ -60,6 +60,66 @@ func Execute() error {
 		return err
 	}
 	return nil
+}
+
+// newRootCmd builds a fresh root command tree. Production uses Execute()
+// which lazily constructs and runs it; tests construct their own with
+// SetOut/SetErr/SetIn redirected.
+func newRootCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:           "sbdb",
+		Short:         "secondbrain-db — file-backed knowledge base ORM",
+		Long:          rootCmd.Long,
+		Version:       version.Version,
+		SilenceUsage:  true,
+		SilenceErrors: true,
+	}
+	cmd.SetVersionTemplate("sbdb {{.Version}}\n")
+
+	cmd.PersistentFlags().StringVarP(&flagSchemaDir, "schema-dir", "S", "", "schemas directory (default: ./schemas)")
+	cmd.PersistentFlags().StringVarP(&flagSchema, "schema", "s", "", "schema name to use")
+	cmd.PersistentFlags().StringVarP(&flagBasePath, "base-path", "b", "", "project root directory")
+	cmd.PersistentFlags().StringVarP(&flagFormat, "format", "f", "", "output format: json, yaml, table (default: auto)")
+	cmd.PersistentFlags().BoolVar(&flagQuiet, "quiet", false, "suppress progress output")
+	cmd.PersistentFlags().BoolVar(&flagVerbose, "verbose", false, "increase logging")
+	cmd.PersistentFlags().BoolVar(&flagDryRun, "dry-run", false, "show what would change without writing")
+	cmd.PersistentFlags().StringVar(&flagConfig, "config", "", "config file path (default: .sbdb.toml)")
+
+	for _, sub := range rootCmd.Commands() {
+		cmd.AddCommand(sub)
+	}
+	return cmd
+}
+
+// resetFlagsForTest zeroes the package-level flag variables. Call from
+// each in-process cmd test before executing.
+func resetFlagsForTest() {
+	flagSchemaDir = ""
+	flagSchema = ""
+	flagBasePath = ""
+	flagFormat = ""
+	flagQuiet = false
+	flagVerbose = false
+	flagDryRun = false
+	flagConfig = ""
+
+	// Per-command flag vars
+	createFields = nil
+	createInput = ""
+	createContent = ""
+	createContentFile = ""
+
+	deleteID = ""
+	deleteYes = false
+	deleteSoft = false
+
+	getID = ""
+	getNoContent = false
+
+	updateID = ""
+	updateFields = nil
+	updateInput = ""
+	updateContentFile = ""
 }
 
 // resolveConfig loads config and resolves flags.
