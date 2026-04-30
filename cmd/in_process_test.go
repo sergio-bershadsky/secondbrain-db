@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -406,7 +407,11 @@ func TestInProcess_GetUnknownIDReturnsError(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(projDir, "schemas/notes.yaml"), []byte(inProcessSchema), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(projDir, ".sbdb.toml"), []byte(inProcessConfig), 0o644))
 
-	binPath := filepath.Join(t.TempDir(), "sbdb-test")
+	binName := "sbdb-test"
+	if runtime.GOOS == "windows" {
+		binName += ".exe"
+	}
+	binPath := filepath.Join(t.TempDir(), binName)
 	build := exec.Command("go", "build", "-o", binPath, ".")
 	build.Dir = root
 	if out, err := build.CombinedOutput(); err != nil {
