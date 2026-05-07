@@ -1,6 +1,6 @@
 # Binaries
-sbdb
-secondbrain-db
+/sbdb
+/secondbrain-db
 *.exe
 *.exe~
 *.dll
