@@ -34,6 +34,7 @@ The root cause is that **markdown files are treated as dumb text when they're ac
 - **Relationship tracking** — when doc A links to doc B, that relationship is a first-class edge in a knowledge graph, not a string buried in prose
 - **Two-tier tracking** — structured entities get full ORM treatment; unstructured pages (templates, index pages, guides) still get integrity signing and graph inclusion
 - **Audit trail** — git is the audit trail. `sbdb events emit <commit-from> [<commit-to>]` projects git history into a JSONL stream on stdout, ready to pipe downstream (SNS / SQS / Kafka / webhooks). No event files are stored — the projection reads from `git log` on demand
+- **Per-document encryption** — mark any doc as readable by a chosen subset via OpenPGP multi-recipient envelopes. A git filter encrypts on commit, decrypts on checkout, so editors see plain markdown for files you have keys for. Recipient identities are blinded in the committed state. See [`docs/guide/acl.md`](docs/guide/acl.md).
 
 The tool is deliberately a **single static binary** (`sbdb`) that operates on **plain files on disk**. No database server. No lock-in. Your docs stay as markdown files that any tool can read. `sbdb` layers structure, integrity, and intelligence on top — and gets out of the way when you don't need it.
 
