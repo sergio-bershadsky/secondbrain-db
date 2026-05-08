@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sbdb.dev/2026-05/sbdb.compute.schema.json",
+  "title": "sbdb x-compute block",
+  "type": "object",
+  "required": ["source"],
+  "properties": {
+    "source":      { "type": "string", "minLength": 1 },
+    "edge":        { "type": "boolean", "default": false },
+    "edge_entity": { "type": "string" }
+  },
+  "additionalProperties": false
+}
