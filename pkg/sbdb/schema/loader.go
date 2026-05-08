@@ -37,26 +37,21 @@ func Load(path string) (*Schema, error) {
 	return Parse(data)
 }
 
-// Parse parses a schema from YAML bytes.
+// Parse parses a schema from YAML/JSON bytes. It auto-detects the
+// dialect and dispatches to the appropriate parser.
 func Parse(data []byte) (*Schema, error) {
-	var s Schema
-	if err := yaml.Unmarshal(data, &s); err != nil {
-		return nil, fmt.Errorf("parsing schema YAML: %w", err)
-	}
-
-	// Set field names from map keys
-	for name, f := range s.Fields {
-		f.Name = name
-	}
-	for name, v := range s.Virtuals {
-		v.Name = name
-	}
-
-	if err := s.Validate(); err != nil {
+	dialect, err := DetectDialect(data)
+	if err != nil {
 		return nil, err
 	}
-
-	return &s, nil
+	switch dialect {
+	case DialectLegacy:
+		return ParseLegacy(data)
+	case DialectNew:
+		return ParseJSONSchema(data)
+	default:
+		return nil, fmt.Errorf("schema: unknown dialect")
+	}
 }
 
 // LoadFromDir finds and loads a schema by entity name from a schemas directory.
