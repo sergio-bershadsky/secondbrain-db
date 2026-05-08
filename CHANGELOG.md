@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.0](https://github.com/sergio-bershadsky/secondbrain-db/compare/v2.1.0...v2.2.0) (2026-05-08)
+
+
+### Features
+
+* **acl:** PGP-based ACL with blinded recipients and transparent git filter ([#45](https://github.com/sergio-bershadsky/secondbrain-db/issues/45)) ([0620eec](https://github.com/sergio-bershadsky/secondbrain-db/commit/0620eec03ce95938370c451cf4abf5d1a76d402d))
+* **schema:** migrate to JSON Schema 2020-12 with x-* extensions ([#47](https://github.com/sergio-bershadsky/secondbrain-db/issues/47)) ([84e49ee](https://github.com/sergio-bershadsky/secondbrain-db/commit/84e49ee0ab34134ea0304a24fe49beb8d12421cd)), closes [#46](https://github.com/sergio-bershadsky/secondbrain-db/issues/46)
+
 ## [2.1.0](https://github.com/sergio-bershadsky/secondbrain-db/compare/v2.0.0...v2.1.0) (2026-04-30)
 
 
