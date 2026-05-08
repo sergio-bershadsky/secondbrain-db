@@ -1,0 +1,22 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: sbdb://notes
+x-schema-version: 1
+x-entity: notes
+x-storage: { docs_dir: docs/notes, filename: "{id}.md" }
+x-id: id
+x-integrity: strict
+type: object
+required: [id, created]
+properties:
+  id:      { type: string }
+  created: { type: string, format: date }
+  status:  { enum: [active, archived], default: active }
+  tags:    { type: array, items: { type: string } }
+  parent:  { $ref: "sbdb://notes#/properties/id" }
+  title:
+    type: string
+    readOnly: true
+    x-compute:
+      source: |
+        def compute(content, fields):
+            return fields["id"]

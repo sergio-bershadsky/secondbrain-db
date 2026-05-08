@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sbdb.dev/2026-05/sbdb.schema.json",
+  "title": "sbdb schema",
+  "description": "Meta-schema validating an sbdb entity schema (JSON Schema 2020-12 with x-* extensions).",
+  "type": "object",
+  "allOf": [{ "$ref": "https://json-schema.org/draft/2020-12/schema" }],
+  "required": ["x-entity", "x-storage", "x-id"],
+  "properties": {
+    "x-schema-version": { "type": ["integer", "string"] },
+    "x-entity": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
+    "x-storage": {
+      "type": "object",
+      "required": ["docs_dir", "filename"],
+      "properties": {
+        "docs_dir": { "type": "string", "minLength": 1 },
+        "records_dir": { "type": "string" },
+        "filename":    { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "x-id":        { "type": "string", "minLength": 1 },
+    "x-integrity": { "enum": ["strict", "warn", "off"] },
+    "x-partition": {
+      "type": "object",
+      "required": ["mode"],
+      "properties": {
+        "mode":  { "enum": ["none", "monthly"] },
+        "field": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "x-events": {
+      "type": "object",
+      "properties": {
+        "bucket": { "type": "string" },
+        "types":  { "type": "object" }
+      }
+    }
+  }
+}

@@ -102,6 +102,8 @@ virtuals:
           return fields["id"]
 ```
 
+For the full schema reference and migration guide, see [docs/guide/schemas.md](docs/guide/schemas.md).
+
 ## Tutorial: building a custom schema from scratch
 
 The real power of `sbdb` is defining your own schemas for any entity type you need. This tutorial walks through creating a **recipe book** knowledge base end-to-end.
