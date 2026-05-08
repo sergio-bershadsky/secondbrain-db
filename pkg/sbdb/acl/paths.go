@@ -36,10 +36,14 @@ func ACLDir(repoRoot string) string {
 // with .yaml under ACLDir.
 func ACLFileFor(repoRoot, docPath string) string {
 	rel := docPath
-	if filepath.IsAbs(docPath) {
-		if r, err := filepath.Rel(repoRoot, docPath); err == nil {
-			rel = r
-		}
+	// Always try to resolve docPath relative to repoRoot first. On Windows
+	// a path like "\repo\docs\x\y.md" is not flagged absolute by
+	// filepath.IsAbs (Windows requires a drive letter), but it still
+	// shares the prefix with repoRoot. filepath.Rel handles both cases
+	// uniformly; if it errors we fall back to docPath as-is (which is
+	// the right behavior for paths already relative to docs/).
+	if r, err := filepath.Rel(repoRoot, docPath); err == nil && !strings.HasPrefix(r, "..") {
+		rel = r
 	}
 	rel = strings.TrimPrefix(filepath.ToSlash(rel), "docs/")
 	rel = strings.TrimSuffix(rel, ".md") + ".yaml"

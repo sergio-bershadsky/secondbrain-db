@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -56,7 +57,11 @@ func TestACLGitFilterRoundTrip(t *testing.T) {
 
 func buildSBDB(t *testing.T) string {
 	t.Helper()
-	out := filepath.Join(t.TempDir(), "sbdb")
+	name := "sbdb"
+	if runtime.GOOS == "windows" {
+		name = "sbdb.exe"
+	}
+	out := filepath.Join(t.TempDir(), name)
 	cmd := exec.Command("go", "build", "-o", out, ".")
 	cmd.Dir = repoRootForTests(t)
 	if b, err := cmd.CombinedOutput(); err != nil {
