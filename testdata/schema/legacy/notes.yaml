@@ -1,0 +1,18 @@
+version: 1
+entity: notes
+docs_dir: docs/notes
+filename: "{id}.md"
+id_field: id
+integrity: strict
+fields:
+  id:      { type: string, required: true }
+  created: { type: date,   required: true }
+  status:  { type: enum, values: [active, archived], default: active }
+  tags:    { type: list, items: { type: string } }
+  parent:  { type: ref, entity: notes }
+virtuals:
+  title:
+    returns: string
+    source: |
+      def compute(content, fields):
+          return fields["id"]
