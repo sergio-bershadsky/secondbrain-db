@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/sergio-bershadsky/secondbrain-db/internal/cli/output"
+	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/acl"
 	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/integrity"
 	schemapkg "github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/schema"
 	"github.com/sergio-bershadsky/secondbrain-db/pkg/sbdb/storage"
@@ -168,6 +170,14 @@ func scopeLabel(all bool) string {
 
 func checkOneDoc(s *schemapkg.Schema, basePath, mdPath string, key []byte) map[string]any {
 	mdExists := fileExists(mdPath)
+	if mdExists {
+		if b, err := os.ReadFile(mdPath); err == nil && acl.IsEnvelopePrefix(b) {
+			if _, perr := acl.ParseEnvelope(bytes.NewReader(b)); perr != nil {
+				return map[string]any{"file": relPath(basePath, mdPath), "drift": "envelope-malformed", "error": perr.Error()}
+			}
+			return map[string]any{"file": relPath(basePath, mdPath), "encrypted": true}
+		}
+	}
 	sc, err := integrity.LoadSidecar(mdPath)
 	switch {
 	case !mdExists && err == nil:
