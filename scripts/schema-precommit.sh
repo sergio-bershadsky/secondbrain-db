@@ -34,9 +34,9 @@ fi
 # this is a pre-implementation commit; warn but do not fail so work can proceed
 # on the implementation branch itself.
 if ! sbdb schema --help 2>/dev/null | grep -q '^  lint'; then
-  echo "sbdb-schema-validate: 'sbdb schema lint' not available in this binary;" >&2
-  echo "                     skipping (implementation pending; see issue #46)." >&2
-  exit 0
+  echo "sbdb-schema-validate: this build of sbdb does not support 'schema lint'." >&2
+  echo "                     run 'go install ./...' from the repo root." >&2
+  exit 1
 fi
 
 fail=0
