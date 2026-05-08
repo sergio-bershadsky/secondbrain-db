@@ -22,3 +22,17 @@ repos:
       - id: check-merge-conflict
       - id: check-added-large-files
         args: ["--maxkb=500"]
+
+  # Schema evolution guardrail: lint, classify (additive vs breaking),
+  # and refuse breaking commits unless x-schema-version major is bumped
+  # and existing docs have been migrated in the same commit.
+  # Override with SBDB_ALLOW_BREAKING=1 for mid-rebase / merge states.
+  # See docs/superpowers/specs/2026-05-08-json-schema-migration-design.md.
+  - repo: local
+    hooks:
+      - id: sbdb-schema-validate
+        name: sbdb schema validate
+        entry: scripts/schema-precommit.sh
+        language: script
+        files: '^(schemas/.*\.(ya?ml|json)|.*\.schema\.(ya?ml|json))$'
+        pass_filenames: true

@@ -191,6 +191,8 @@ These run after JSON Schema validation succeeds; failures are reported with the 
 sbdb schema lint <path>...                # validate file(s) against meta-schemas
 sbdb schema migrate <path>... [--check] [--in-place|-o <dir>]
                                           # rewrite legacy → new shape
+sbdb schema diff <old> <new>              # classify additive vs breaking deltas
+sbdb schema check [--against <git-ref>]   # validate every existing doc against current schema
 sbdb schema show <entity>                 # already exists; updated to emit new shape
 ```
 
@@ -203,6 +205,75 @@ sbdb schema show <entity>                 # already exists; updated to emit new 
 Dual-dialect parsing is permanent in the loader. The cost is a constant-time key sniff per file; not worth ripping out. No deprecation warning is emitted by default; users who want a warning set `SBDB_WARN_LEGACY_SCHEMA=1`. Documented in the user guide section we add as part of this work.
 
 `sbdb doctor check` does not flag legacy schemas. `sbdb schema lint` does (with a clear "this is legacy, run `sbdb schema migrate`" message).
+
+## Schema evolution guardrails
+
+Schema files describe the shape of every existing document. Editing a schema changes what counts as valid retroactively. Without guardrails an additive-looking edit (a new required field, a tightened enum) silently invalidates the entire knowledge base on the next `doctor check`. The pre-commit hook is where the user feels the change first, so that is where we enforce.
+
+### What "breaking" means
+
+| Change | Class |
+|---|---|
+| Add optional property | additive |
+| Add property to `required` | breaking |
+| Remove a property when `additionalProperties: false` | breaking |
+| Tighten an `enum`, `pattern`, `minLength`, `minimum`, `maxLength`, `maximum` | breaking |
+| Change `type` | breaking |
+| Loosen a constraint | additive |
+| Add or remove an entity / schema file | additive (independent of existing docs) |
+| Rename a property | breaking (modelled as remove + add) |
+| Edit `x-compute.source` | additive (only changes computed values, not stored data) |
+| Edit `x-storage.docs_dir` / `x-storage.filename` | breaking (changes where docs live; needs migration) |
+
+### Three commands
+
+- **`sbdb schema diff <old> <new>`** — pure schema comparison. Walks both schemas, classifies each delta as `additive` or `breaking`, prints both lists. Exit code `0` if additive-only, `1` if any breaking. No docs needed; runs in milliseconds.
+- **`sbdb schema check [--against <git-ref>]`** — empirical compatibility check. Runs the new schema against every existing doc on disk. With `--against HEAD~1`, diffs the working-tree schema against docs that were valid under the previous committed schema. Tells the truth regardless of how subtle the schema edit was. Default exit `0` only if every doc still validates.
+- **`sbdb schema lint <path>...`** — already in the spec; validates a schema file against the meta-schemas. Catches malformed `x-*` blocks before they reach the validator.
+
+### Pre-commit hook (the gate)
+
+Sbdb ships a local pre-commit hook entry in the project's `.pre-commit-config.yaml`. The hook fires on commits that modify any file under `schemas/` or any file matching `*.schema.{yaml,yml,json}`:
+
+```yaml
+- repo: local
+  hooks:
+    - id: sbdb-schema-validate
+      name: sbdb schema validate
+      entry: scripts/schema-precommit.sh
+      language: script
+      files: '^(schemas/.*\.(ya?ml|json)|.*\.schema\.(ya?ml|json))$'
+      pass_filenames: true
+```
+
+`scripts/schema-precommit.sh` runs three checks on every staged schema file:
+
+1. `sbdb schema lint <file>` — meta-schema validation.
+2. `sbdb schema diff HEAD:<file> <file>` — classify the change.
+3. If diff reports `breaking`, run `sbdb schema check --against HEAD` and refuse the commit unless `x-schema-version` major component has been bumped *and* every existing doc still validates against the new schema (i.e. user has already migrated docs in the same commit).
+
+Override is intentional friction: pass `SBDB_ALLOW_BREAKING=1` in the environment to skip the breaking check (useful in mid-rebase or merge-conflict states). The override does not skip `lint` or `diff` — only the failing-docs check.
+
+### Schema version convention
+
+`x-schema-version` becomes a meaningful number, not always `1`:
+
+- Major bump (1 → 2): a breaking change has been made. Required when `schema diff` reports breaking; the pre-commit hook enforces.
+- Optional minor sub-component (e.g. `x-schema-version: "1.3"`): additive-only. Not enforced; convention only.
+
+This does not introduce multi-version coexistence — at any moment the schema file in `main` is the single source of truth and every doc must validate against it. The version number signals to operators that a migration occurred between two points in history; release-please can also surface it in changelog entries.
+
+### Doc migration story (manual, v1)
+
+When the user knowingly makes a breaking change:
+
+1. Edit schema.
+2. `sbdb schema check` lists docs that would fail and why.
+3. User edits the docs (manually, or via batched `sbdb update` calls) in the same commit.
+4. User bumps `x-schema-version` major component.
+5. `git commit` — pre-commit hook re-runs `schema check`, now passes.
+
+Declarative `x-migrations` blocks (transformations applied to docs at load time) are explicitly out of scope for v1. Revisit if real user need surfaces.
 
 ## Risks and mitigations
 
@@ -223,6 +294,9 @@ None blocking. Implementation will pin (a) whether `x-compute.source` accepts th
 - New loader + normaliser + validator integration; old hand-rolled validator deleted.
 - Two meta-schemas embedded in the binary; written to `.sbdb/cache/meta/` on `sbdb init`.
 - `sbdb schema lint` rejects malformed `x-*` blocks (e.g. wrong type for `x-integrity`, missing `x-storage.docs_dir`).
+- `sbdb schema diff` classifies a curated set of edits correctly (table in the Schema Evolution Guardrails section).
+- `sbdb schema check` reports failing docs accurately; pre-commit hook refuses commits that would break the KB unless `x-schema-version` major is bumped and docs are migrated in the same commit.
+- Pre-commit hook entry exists in `.pre-commit-config.yaml`; `scripts/schema-precommit.sh` runs lint + diff + check; override via `SBDB_ALLOW_BREAKING=1` works.
 - `sbdb schema migrate` round-trips: migrate(legacy) parses cleanly under the new loader; in-memory `Schema` is identical to the legacy parse.
 - An external JSON Schema validator (added as a test dep, e.g. `ajv` driven from a small Node test harness, or another Go validator) accepts every migrated schema file with no errors (ignoring `x-*` per spec).
 - All existing testdata fixtures pass `sbdb doctor check` after migration.
