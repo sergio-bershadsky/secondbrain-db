@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.3.0](https://github.com/sergio-bershadsky/secondbrain-db/compare/v2.2.0...v2.3.0) (2026-05-10)
+
+
+### Features
+
+* doctor heal + post-fix mode by default ([#54](https://github.com/sergio-bershadsky/secondbrain-db/issues/54)) ([b3f4bf1](https://github.com/sergio-bershadsky/secondbrain-db/commit/b3f4bf17694f20b65b39f76d985d275bb9d81031)), closes [#53](https://github.com/sergio-bershadsky/secondbrain-db/issues/53)
+* **plugin:** host Claude plugin and marketplace in this repo ([#50](https://github.com/sergio-bershadsky/secondbrain-db/issues/50)) ([1212715](https://github.com/sergio-bershadsky/secondbrain-db/commit/12127156e6f7215299094c3862a287e5422005f0))
+
 ## [2.2.0](https://github.com/sergio-bershadsky/secondbrain-db/compare/v2.1.0...v2.2.0) (2026-05-08)
 
 
