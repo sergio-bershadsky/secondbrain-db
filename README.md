@@ -38,7 +38,7 @@ The root cause is that **markdown files are treated as dumb text when they're ac
 
 The tool is deliberately a **single static binary** (`sbdb`) that operates on **plain files on disk**. No database server. No lock-in. Your docs stay as markdown files that any tool can read. `sbdb` layers structure, integrity, and intelligence on top — and gets out of the way when you don't need it.
 
-It's also designed as an **API layer for AI agents**. Every command outputs structured JSON. Exit codes are stable and semantic. Schema introspection is self-describing. A Claude Code plugin ships with integrity hooks that automatically detect and fix drift after every edit. The premise is simple: if an AI is going to help maintain your knowledge base, the knowledge base needs to be able to tell the AI when something is wrong.
+It's also designed as an **API layer for AI agents**. Every command outputs structured JSON. Exit codes are stable and semantic. Schema introspection is self-describing. A Claude Code plugin lets the agent edit `.md` files directly under `docs/`; a Stop hook reconciles per-doc integrity sidecars at end of turn via `sbdb doctor heal`. The premise is simple: AI-friendly editing without giving up the integrity guarantees that make this thing useful as a database.
 
 ## Install
 
@@ -838,11 +838,19 @@ The plugin lives in this repo under `claude-plugin/`, alongside the CLI it wraps
 
 (The plugin previously shipped from the `sergio-bershadsky/ai` marketplace; that entry is being removed. If you installed it from there, switch to the marketplace above.)
 
-The plugin ships a PreToolUse guard that protects sbdb-managed repos from out-of-band AI edits:
+The plugin has two modes, controlled by `[claude] mode` in `.sbdb.toml`:
 
-- `guard-docs.py` — blocks Write/Edit/MultiEdit/NotebookEdit and Bash mutations targeting `docs/`. The AI must use `sbdb create / update / delete` instead.
+- **`post-fix`** (default): the agent edits `.md` files under `docs/` directly using normal `Edit`/`Write` tools. A Stop hook reconciles sidecars at end of turn via `sbdb doctor heal --since HEAD --i-meant-it` — recomputes virtuals, re-signs in lockstep with the new content. The trade: you give up real-time AI-tamper detection in exchange for a frictionless edit flow. Pre-commit still catches anything the hook missed.
+- **`block`** (opt-in): a PreToolUse guard denies `Edit`/`Write`/`MultiEdit` under `docs/`; all writes go through `sbdb create / update / delete`. Use this for compliance-heavy KBs (ADRs, audit logs) where real-time tamper detection matters.
 
-The guard activates only when `.sbdb.toml` is present at the repo root. It prints install guidance if the `sbdb` CLI is missing.
+To opt into block mode, add this to `.sbdb.toml`:
+
+```toml
+[claude]
+mode = "block"
+```
+
+A SessionStart hint fires once on a fresh repo (no `[claude]` section in `.sbdb.toml`) telling the user about the new default and the opt-out path. Adding any `[claude]` key silences it.
 
 ## License
 

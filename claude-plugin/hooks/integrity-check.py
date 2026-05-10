@@ -46,6 +46,13 @@ def main():
     if not project_root:
         return
 
+    # In post-fix mode (the default) the agent edits docs/ directly and the
+    # Stop hook reconciles via `sbdb doctor heal`. Per-edit warnings would
+    # fire on every Edit and add no value — stay silent here and let
+    # post-fix-heal.py handle reconciliation at end of turn.
+    if read_claude_mode(project_root) != "block":
+        return
+
     sbdb_path = find_sbdb()
     if not sbdb_path:
         return
@@ -136,6 +143,24 @@ def build_message(drifts, edited_file):
         )
 
     return "".join(parts) if len(parts) > 1 else ""
+
+
+def read_claude_mode(project_root):
+    """Returns 'post-fix' (default) or 'block' from [claude].mode."""
+    sbdb_toml = os.path.join(project_root, ".sbdb.toml")
+    if not os.path.exists(sbdb_toml):
+        return "post-fix"
+    try:
+        import tomllib
+    except ImportError:
+        return "post-fix"
+    try:
+        with open(sbdb_toml, "rb") as f:
+            data = tomllib.load(f)
+    except (OSError, ValueError):
+        return "post-fix"
+    mode = (data.get("claude") or {}).get("mode", "post-fix")
+    return mode if mode in ("post-fix", "block") else "post-fix"
 
 
 def find_project_root(file_path):

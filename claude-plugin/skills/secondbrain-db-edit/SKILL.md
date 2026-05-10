@@ -8,150 +8,170 @@ description: |
   to docs/ in a project with .sbdb.toml.
 ---
 
-# KB Edit Skill — Integrity-First Document Operations
+# KB Edit Skill — Direct edits with end-of-turn reconciliation
 
-When editing any file in an sbdb-managed knowledge base you MUST maintain
-integrity throughout. Every edit must leave the KB in a clean state.
+In sbdb v2 each document is a pair: `<id>.md` (content + frontmatter)
+and a sibling `<id>.yaml` integrity sidecar. Both live under
+`docs/<entity>/` and are committed to git. There is no `data/`
+directory and no aggregate index.
 
-In v2 each document is a **pair**: `<id>.md` (content + frontmatter) and a
-sibling `<id>.yaml` integrity sidecar. Both are committed to git. There
-is no `data/` directory and no aggregate index.
+## Default mode: edit `.md` files directly
 
-## Before any edit
+**Use `Edit`, `Write`, and `MultiEdit` directly on any `.md` file under
+`docs/`.** Treat it like any other markdown repo. A Stop hook reconciles
+sidecars at end of turn via `sbdb doctor heal --since HEAD --i-meant-it`,
+which:
 
-1. Check this is an sbdb project:
-```bash
-test -f .sbdb.toml && echo "sbdb project" || echo "not managed by sbdb"
+- Recomputes virtual fields from the on-disk markdown.
+- Re-signs sidecars in lockstep with the new content.
+- Skips files outside any schema's `docs_dir` silently.
+
+You don't run any "after-edit" command. You don't think about sidecars
+during the session. The hook fires when your turn ends and prints a
+one-line summary like:
+
+> [sbdb] post-fix heal: 2 re-signed, 1 sidecar(s) recreated
+
+### Creating a new document
+
+```
+Write to docs/notes/my-new-note.md:
+---
+id: my-new-note
+created: 2026-05-10
+status: active
+---
+# My note
+
+Body here.
 ```
 
-2. Determine if the target file is schema-managed:
+That's it. The Stop hook creates the `<id>.yaml` sidecar with fresh
+hashes when the turn ends.
+
+If you need to discover the schema's required frontmatter fields first:
+
 ```bash
-sbdb schema list --format json
-# Compare the path prefix against each schema's docs_dir.
+sbdb schema show -s notes --format json
 ```
 
-## Creating/updating schema-managed documents
+### Editing existing content
 
-**Always use the CLI — never write `<id>.md` files directly.** The CLI
-keeps the `.md` and its `<id>.yaml` sidecar in lockstep; direct writes
-leave them out of sync.
+Just `Edit` the `.md`. Frontmatter changes, body changes, replacements —
+all handled. No special command.
+
+### Deleting a document
 
 ```bash
-# Create (preferred — handles sidecar + integrity automatically)
-echo '{"id":"...","field":"value","content":"# Title\n\nBody"}' \
-  | sbdb create -s <schema> --input -
+rm docs/notes/old-note.md docs/notes/old-note.yaml
+```
+
+Or use `sbdb delete -s notes --id old-note --yes` if you want a single
+command that handles both files.
+
+## When to use the `sbdb` CLI instead
+
+The CLI is still the right tool when:
+
+- **You want JSON I/O** — piping records between scripts:
+  ```bash
+  echo '{"id":"x","created":"2026-05-10","content":"# X"}' \
+    | sbdb create -s notes --input -
+  ```
+- **Bulk frontmatter ops** — set a status across many docs:
+  ```bash
+  for id in $(sbdb query -s notes --filter status=draft --format json | jq -r '.data[].id'); do
+    sbdb update -s notes --id "$id" --field status=published
+  done
+  ```
+- **You're committing mid-conversation** and need pre-commit to pass
+  immediately, not at end-of-turn.
+- **Block mode is active** (see below).
+
+## Recovering from drift / tamper
+
+If `sbdb doctor check` reports issues — usually because edits happened
+across multiple sessions or outside Claude Code — heal them:
+
+```bash
+sbdb doctor heal --i-meant-it           # heal everything dirty vs HEAD
+sbdb doctor heal --i-meant-it --id foo  # heal one doc
+sbdb doctor heal --i-meant-it --all     # heal everything in every schema
+sbdb doctor heal --i-meant-it --since main  # heal everything dirty vs main
+```
+
+`heal` is sugar over `fix --recompute` + `sign --force`, with one
+safety property: `--i-meant-it` is your acknowledgement that any
+tampered files were edited intentionally. Without it, tamper exits 6
+with an error message.
+
+## Block mode (opt-in, strict guard)
+
+Some KBs need real-time tamper detection — compliance ADRs, audit logs,
+anything where "an unintentional edit slipped through" is a serious
+problem. Activate by adding to `.sbdb.toml`:
+
+```toml
+[claude]
+mode = "block"
+```
+
+In block mode:
+
+- `Edit`, `Write`, `MultiEdit` under `docs/` are **denied** by a
+  PreToolUse hook.
+- A Stop hook actively **blocks** the agent from finishing with a dirty
+  KB.
+- All writes go through `sbdb create / update / delete`.
+
+### Block-mode workflow
+
+```bash
+# Create (JSON on stdin)
+echo '{"id":"ADR-0005","number":5,"title":"New Architecture","status":"draft","created":"2026-05-10","content":"# ADR-0005\n\n## Context\n..."}' \
+  | sbdb create -s adr --input -
 
 # Update fields
-sbdb update -s <schema> --id <id> --field key=value
+sbdb update -s adr --id ADR-0005 --field status=accepted
 
-# Replace body from a file
-sbdb update -s <schema> --id <id> --content-file body.md
+# Replace body from a file (the only ergonomic way to edit multi-line markdown
+# in block mode — write the new body to /tmp/body.md, then pass it in)
+sbdb update -s adr --id ADR-0005 --content-file /tmp/body.md
+
+# Combined body + frontmatter via JSON
+echo '{"content":"# updated\n\n...","status":"accepted"}' \
+  | sbdb update -s adr --id ADR-0005 --input -
 
 # Delete
-sbdb delete -s <schema> --id <id> --yes
+sbdb delete -s adr --id ADR-0005 --yes
 ```
 
-If you must use Write/Edit tools directly (e.g. for a complex markdown body
-that's hard to express as a JSON string), follow the **integrity recovery
-loop** below — but the plugin's PreToolUse hook will block direct writes
-under `docs/` anyway, so this path rarely succeeds.
+The PreToolUse hook's deny message lists these flags whenever you trip
+it.
 
-## Creating/updating untracked files
+## Untracked files (both modes)
 
-For files that don't belong to a schema (TEMPLATE.md, index.md, custom
-pages outside any schema's `docs_dir`):
+Files outside any schema's `docs_dir` (`docs/index.md`, `TEMPLATE.md`,
+custom pages) aren't reconciled by the heal hook — `heal --since` skips
+them with `outcome=skipped_no_schema`. Manage them via:
 
 ```bash
-# Create and sign
-sbdb untracked create docs/notes/TEMPLATE.md --content-file template.md
-
-# Or sign an existing file after editing it
-sbdb untracked sign docs/notes/TEMPLATE.md
-```
-
-## Integrity recovery loop (MANDATORY)
-
-After ANY direct file edit (Write or Edit tool) to a `.md` file inside
-`docs/`:
-
-```
-LOOP (max 5 iterations):
-  1. Run: sbdb doctor check --format json
-     (default scope = working-tree only — sees just what you edited)
-  2. If exit 0 → DONE, integrity is clean
-  3. If output shows ONLY frontmatter_sha / record_sha drift (no
-     content_sha mismatch and no bad_sig) →
-       Run: sbdb doctor fix --recompute
-  4. If output shows content_sha mismatch (real content tamper) →
-       The user edited the markdown body. Ask whether the change is
-       intentional. If yes: sbdb doctor sign --force.
-       If no: git checkout the file.
-  5. If output shows bad_sig →
-       The HMAC key changed or the sidecar was tampered. Ask the user.
-  6. Go to step 1
-```
-
-**You MUST NOT finish your task with a non-zero doctor check.** If after
-5 iterations the KB is still dirty, report the issue to the user and
-ask for guidance.
-
-## After editing untracked files
-
-```bash
-sbdb untracked sign <file-path>
+sbdb untracked sign <path>          # sign an existing file
+sbdb untracked sign-all docs/       # sign every untracked .md under docs/
+sbdb untracked create <path> --content-file <body>
 ```
 
 ## Rules
 
-1. **Never skip the integrity check** — even if the edit seems trivial.
-2. **Prefer sbdb CLI over direct file writes** — the CLI keeps `<id>.md`
-   and `<id>.yaml` synchronised.
-3. **Never edit `<id>.yaml` sidecars directly.** They're integrity
-   artefacts, not user-editable.
-4. **If the post-edit hook reports drift, fix it immediately** — don't
-   continue with other work until integrity is restored.
-5. **When creating new files in a schema's `docs_dir`**, always use
-   `sbdb create` — direct Write creates an orphan `.md` with no sidecar.
-6. **When creating new files outside schemas**, always use
-   `sbdb untracked create` or `sbdb untracked sign`.
-7. **After bulk operations**, run `sbdb doctor check --all` once at the
-   end (not after every file).
-
-## Decision tree: which tool to use?
-
-```
-Is the file part of a schema? (check: does docs_dir match?)
-├── YES → Use `sbdb create / update / delete` CLI
-│         → md + sidecar handled automatically
-│
-└── NO → Is the file already in the untracked registry?
-         ├── YES → Edit via Write/Edit, then: sbdb untracked sign <path>
-         │
-         └── NO → Create with: sbdb untracked create <path> --content-file <file>
-                  Or: write file, then: sbdb untracked sign <path>
-```
-
-## Example: Adding a new ADR
-
-```bash
-# 1. Create via CLI
-echo '{"id":"ADR-0005","number":5,"title":"New Architecture","status":"draft","category":"arch","created":"2026-04-13","author":"Sergey","content":"# ADR-0005\n\n## Context\n..."}' \
-  | sbdb create -s adr --input -
-
-# 2. Verify (default scope finds your new file)
-sbdb doctor check -s adr
-# → exit 0
-```
-
-## Example: Editing an index page (untracked)
-
-```bash
-# 1. Write the file with the Write tool — for index pages outside any
-#    schema's docs_dir, the guard hook permits this.
-# 2. Sign it as untracked
-sbdb untracked sign docs/index.md
-
-# 3. Verify
-sbdb doctor check
-# → exit 0
-```
+1. **Don't edit `<id>.yaml` sidecars directly.** They're integrity
+   artefacts. The Stop hook regenerates them; touching them by hand
+   only creates drift.
+2. **In post-fix mode (the default), don't run `sbdb doctor check`
+   reflexively after every edit.** The hook does it for you. Run it
+   when something feels off, when reviewing a long session, or before
+   merging a PR.
+3. **Use `heal --i-meant-it` for recovery, not `sign --force --all`.**
+   Heal recomputes virtuals before signing, which is the order that
+   keeps record_sha consistent. Bare `sign --force` skips that step.
+4. **In block mode, never use Edit/Write under `docs/`** — the hook
+   denies it and the user has explicitly opted into that posture.

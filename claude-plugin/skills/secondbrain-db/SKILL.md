@@ -69,6 +69,7 @@ The migration is idempotent — safe to re-run.
 | Check integrity (full audit) | `sbdb doctor check --all` |
 | Fix drift | `sbdb doctor fix --recompute` |
 | Re-sign after intentional edit | `sbdb doctor sign --force` |
+| Heal everything (fix + sign) | `sbdb doctor heal --i-meant-it` |
 | Migrate v1 → v2 layout | `sbdb doctor migrate` |
 | Build KG index | `sbdb index build` |
 | Build KG (crawl mode) | `sbdb index build --crawl` |
@@ -99,34 +100,66 @@ For doctor check specifically, drift causes are:
 `content_sha mismatch`, `frontmatter_sha mismatch`, `record_sha mismatch`,
 `bad_sig`, `missing-sidecar`, `missing-md`.
 
-## When creating documents
+## How Claude edits docs (post-fix mode — the default)
 
-Always use `--format json` for structured output. Build the JSON payload
-using the schema:
+**You can use `Edit`, `Write`, and `MultiEdit` directly on any `.md` file
+under `docs/`.** Treat the KB like any other markdown repo:
+
+- Creating a new doc → `Write` to `docs/<entity>/<new-id>.md` with
+  frontmatter + body in one shot.
+- Editing existing content → `Edit` the `.md` directly.
+- Renaming, moving, deleting → standard file ops.
+
+A Stop hook reconciles `<id>.yaml` sidecars at end of turn by running
+`sbdb doctor heal --since HEAD --i-meant-it`. You don't need to think
+about integrity during the session — the system catches up after.
+
+**Don't edit `<id>.yaml` sidecars manually.** They are integrity artefacts
+the CLI owns. The Stop hook regenerates them; touching them by hand only
+creates drift the hook then has to repair.
+
+The `sbdb create / update / delete` commands still exist and are useful
+when you want JSON I/O (e.g. piping records between tools), but for
+human-shaped editing of markdown content, the direct-edit path is the
+primary workflow.
+
+### When to use `sbdb update` instead of direct Edit
+
+- The user explicitly asks for it.
+- You're scripting a bulk operation (loop over IDs, use `--field` to
+  set a status across many docs).
+- You need the sidecar updated *immediately* (not at end of turn) —
+  e.g. you're about to commit mid-conversation and need pre-commit
+  to pass.
+
+### Recovering from a tamper warning
+
+If the user has been editing across multiple sessions and `sbdb doctor
+check` reports tamper, run:
 
 ```bash
-# Discover the schema first
-sbdb schema show -s notes --format json
-
-# Then create
-echo '{"id":"my-doc","created":"2026-04-08","content":"# Title\n\nBody."}' \
-  | sbdb create -s notes --input -
+sbdb doctor heal --i-meant-it           # heal everything dirty vs HEAD
+sbdb doctor heal --i-meant-it --id foo  # heal one doc
+sbdb doctor heal --i-meant-it --all     # heal everything
 ```
 
-## When the user edits files manually
+`heal` composes fix + sign in one step, recomputing virtuals before
+re-signing. Without `--i-meant-it` it reports tamper and exits 6 — the
+flag is your acknowledgement that the edits were intentional.
 
-After any hand-edit to `.md` files inside `docs/`:
-1. Run `sbdb doctor check` (default scope finds it).
-2. If `content_sha mismatch`: ask the user whether to `sbdb doctor sign --force`
-   (accept the edit) or revert via `git checkout`.
-3. If only `frontmatter_sha`/`record_sha` drift: `sbdb doctor fix --recompute`
-   is safe — it rebuilds the sidecar from the current on-disk state.
-4. Never auto-sign without asking — content tamper detection is a safety feature.
+### Block mode (opt-in, strict guard)
 
-**Never edit `<id>.yaml` sidecars directly.** They are integrity artefacts
-maintained by the CLI. If you need to change a document's metadata, edit
-the `.md` frontmatter through `sbdb update` (or write the `.md` directly
-and follow the post-edit doctor flow above).
+Some KBs need real-time tamper detection (compliance ADRs, audit logs).
+Add this to `.sbdb.toml`:
+
+```toml
+[claude]
+mode = "block"
+```
+
+In block mode, `Edit`/`Write`/`MultiEdit` under `docs/` is denied; you
+must go through `sbdb create / update / delete`. See the
+`secondbrain-db-edit` skill for the block-mode flow.
 
 ## Reference schemas
 

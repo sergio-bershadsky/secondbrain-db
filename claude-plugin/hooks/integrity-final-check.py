@@ -23,6 +23,11 @@ def main():
     if not project_root:
         return  # not an sbdb project
 
+    # In post-fix mode (the default) reconciliation happens via
+    # post-fix-heal.py; this hook is the block-mode counterpart.
+    if read_claude_mode(project_root) != "block":
+        return
+
     sbdb = find_sbdb()
     if not sbdb:
         return  # sbdb not installed
@@ -130,6 +135,24 @@ def check_untracked(sbdb, project_root):
     except Exception:
         pass
     return 0
+
+
+def read_claude_mode(project_root):
+    """Returns 'post-fix' (default) or 'block' from [claude].mode."""
+    sbdb_toml = os.path.join(project_root, ".sbdb.toml")
+    if not os.path.exists(sbdb_toml):
+        return "post-fix"
+    try:
+        import tomllib
+    except ImportError:
+        return "post-fix"
+    try:
+        with open(sbdb_toml, "rb") as f:
+            data = tomllib.load(f)
+    except (OSError, ValueError):
+        return "post-fix"
+    mode = (data.get("claude") or {}).get("mode", "post-fix")
+    return mode if mode in ("post-fix", "block") else "post-fix"
 
 
 def find_project_root(start_dir):

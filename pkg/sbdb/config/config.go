@@ -18,6 +18,23 @@ type Config struct {
 	Output         OutputConfig         `mapstructure:"output"`
 	Integrity      IntegrityConfig      `mapstructure:"integrity"`
 	KnowledgeGraph KnowledgeGraphConfig `mapstructure:"knowledge_graph"`
+	Claude         ClaudeConfig         `mapstructure:"claude"`
+}
+
+// ClaudeConfig governs how the Claude Code plugin interacts with this KB.
+//
+//   - "post-fix" (default): the agent edits docs/ directly; a Stop hook
+//     reconciles sidecars at end of turn via `sbdb doctor heal`.
+//   - "block": the PreToolUse hook denies direct edits under docs/, forcing
+//     the agent through `sbdb create / update / delete`. Use this when
+//     real-time tamper detection matters (compliance-heavy KBs, ADRs).
+//
+// The plugin's hooks read this section directly; sbdb itself does not
+// branch on the value today, but exposing the schema here means typos
+// surface as "unknown key" warnings rather than silently parsing as
+// strings, and future code can rely on the field.
+type ClaudeConfig struct {
+	Mode string `mapstructure:"mode"`
 }
 
 // KnowledgeGraphConfig controls the SQLite knowledge graph and semantic search.
@@ -73,6 +90,7 @@ func Load(basePath string) (*Config, error) {
 	v.SetDefault("knowledge_graph.graph.auto_index", true)
 	v.SetDefault("knowledge_graph.graph.extract_links", true)
 	v.SetDefault("knowledge_graph.graph.validate_refs", false)
+	v.SetDefault("claude.mode", "post-fix")
 
 	// Config file
 	v.SetConfigName(".sbdb")
