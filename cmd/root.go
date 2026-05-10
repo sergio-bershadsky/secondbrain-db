@@ -120,6 +120,11 @@ func resetFlagsForTest() {
 	updateFields = nil
 	updateInput = ""
 	updateContentFile = ""
+
+	healMeantIt = false
+	healIDs = nil
+	healSince = ""
+	healAll = false
 }
 
 // resolveConfig loads config and resolves flags.
