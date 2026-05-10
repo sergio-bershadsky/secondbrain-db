@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""PreToolUse hook: block direct AI edits under docs/ in sbdb-managed repos.
+"""PreToolUse hook: block direct AI edits under docs/ in sbdb-managed repos
+(only when [claude] mode = "block" is set in .sbdb.toml).
 
-When a repo contains .sbdb.toml at its root, all mutations to docs/ must go
-through the `sbdb` CLI. This hook rejects Write/Edit/MultiEdit/NotebookEdit
-targeting docs/, and scans Bash commands for file-mutation patterns targeting
-docs/ paths. If sbdb is not installed, the block message includes install
-instructions.
+The default is post-fix: direct edits are allowed and a Stop hook reconciles
+sidecars at session end via `sbdb doctor heal`. Users who want strict
+real-time integrity checks opt back in with `[claude] mode = "block"`, in
+which case this hook rejects Write/Edit/MultiEdit/NotebookEdit targeting
+docs/ and scans Bash commands for file-mutation patterns targeting docs/.
+
+If sbdb is not installed, the block message includes install instructions.
 """
 
 import json
@@ -48,6 +51,8 @@ def main():
         if not project_root:
             continue
         if not is_under_docs(target, project_root):
+            continue
+        if read_claude_mode(project_root) != "block":
             continue
         emit_block(project_root)
         return
@@ -127,6 +132,29 @@ def find_project_root(file_path):
     return None
 
 
+def read_claude_mode(project_root):
+    """Returns 'post-fix' (default) or 'block', read from [claude].mode.
+
+    Falls back to the post-fix default on any parse error, missing file, or
+    older Python without tomllib. The hook is best-effort: if we can't tell
+    what mode the user wants, the safer choice is to stay out of the way.
+    """
+    sbdb_toml = os.path.join(project_root, ".sbdb.toml")
+    if not os.path.exists(sbdb_toml):
+        return "post-fix"
+    try:
+        import tomllib  # Python 3.11+
+    except ImportError:
+        return "post-fix"
+    try:
+        with open(sbdb_toml, "rb") as f:
+            data = tomllib.load(f)
+    except (OSError, ValueError):
+        return "post-fix"
+    mode = (data.get("claude") or {}).get("mode", "post-fix")
+    return mode if mode in ("post-fix", "block") else "post-fix"
+
+
 def find_sbdb():
     """Find the sbdb binary in PATH or common locations."""
     for path_dir in os.environ.get("PATH", "").split(os.pathsep):
@@ -150,10 +178,10 @@ def emit_block(project_root):
 
     if sbdb:
         reason = (
-            f"Direct edits to docs/ are not allowed in sbdb-managed repos "
-            f"(.sbdb.toml at {project_root}). The CLI maintains both the "
-            f".md file and its sibling <id>.yaml integrity sidecar in "
-            f"lockstep — direct edits leave them out of sync.\n\n"
+            f"This repo opted into strict block-mode "
+            f"(.sbdb.toml at {project_root} has `[claude] mode = \"block\"`). "
+            f"Direct edits to docs/ are blocked because the .md file and its "
+            f"sibling <id>.yaml integrity sidecar must move in lockstep.\n\n"
             f"Load the `secondbrain-db-edit` skill for the full workflow. "
             f"Quick reference:\n"
             f"  # Body rewrite — write new body to a file, then:\n"
@@ -166,11 +194,11 @@ def emit_block(project_root):
             f"  # Create / delete:\n"
             f"  sbdb create -s <schema> --input -   # JSON on stdin\n"
             f"  sbdb delete -s <schema> --id <id> --yes\n\n"
-            f"For a body rewrite, prefer Write to a path *outside* docs/ "
-            f"(e.g. /tmp/body.md) and pass it via --content-file — that path "
-            f"is supported, not a workaround.\n"
-            f"After unintentional direct edits, run "
-            f"`sbdb doctor fix --recompute` to rebuild the sidecar."
+            f"After an unintentional direct edit, "
+            f"`sbdb doctor heal --i-meant-it --id <id>` reconciles the sidecar.\n\n"
+            f"To switch to the default post-fix workflow (Claude edits docs/ "
+            f"directly, sidecars are reconciled at session end), remove the "
+            f"`mode = \"block\"` line from .sbdb.toml."
         )
     else:
         reason = (

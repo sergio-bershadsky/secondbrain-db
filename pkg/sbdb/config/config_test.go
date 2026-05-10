@@ -25,6 +25,19 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, 1536, cfg.KnowledgeGraph.Embeddings.Dimension)
 	assert.Equal(t, true, cfg.KnowledgeGraph.Graph.AutoIndex)
 	assert.Equal(t, true, cfg.KnowledgeGraph.Graph.ExtractLinks)
+	assert.Equal(t, "post-fix", cfg.Claude.Mode, "post-fix is the default Claude mode")
+}
+
+func TestLoad_ClaudeMode_FromTOML(t *testing.T) {
+	dir := t.TempDir()
+	toml := `[claude]
+mode = "block"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".sbdb.toml"), []byte(toml), 0o644))
+
+	cfg, err := Load(dir)
+	require.NoError(t, err)
+	assert.Equal(t, "block", cfg.Claude.Mode)
 }
 
 func TestLoad_FromTOML(t *testing.T) {
