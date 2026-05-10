@@ -1,6 +1,6 @@
 module github.com/sergio-bershadsky/secondbrain-db
 
-go 1.25.9
+go 1.25.10
 
 require (
 	github.com/ProtonMail/go-crypto v1.4.1
@@ -16,7 +16,7 @@ require (
 )
 
 require (
-	github.com/cloudflare/circl v1.6.2 // indirect
+	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
