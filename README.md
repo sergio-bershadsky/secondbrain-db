@@ -829,7 +829,14 @@ The agent also gets a built-in audit channel: git history. After a commit, `sbdb
 
 ### Claude Code plugin
 
-A plugin is available via the [bershadsky-claude-tools marketplace](https://github.com/sergio-bershadsky/ai). Install with: `/plugin marketplace add sergio-bershadsky/ai` then `/plugin install secondbrain-db`.
+The plugin lives in this repo under `claude-plugin/`, alongside the CLI it wraps, so its version stays in lockstep with the Go release. Install with:
+
+```
+/plugin marketplace add sergio-bershadsky/secondbrain-db
+/plugin install secondbrain-db
+```
+
+(The plugin previously shipped from the `sergio-bershadsky/ai` marketplace; that entry is being removed. If you installed it from there, switch to the marketplace above.)
 
 The plugin ships a PreToolUse guard that protects sbdb-managed repos from out-of-band AI edits:
 
