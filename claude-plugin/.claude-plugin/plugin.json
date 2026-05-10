@@ -1,6 +1,6 @@
 {
   "name": "secondbrain-db",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "File-backed knowledge base ORM with per-md sidecars, YAML schemas, Starlark virtuals, HMAC integrity, knowledge graph, and an embeddable Go library at pkg/sbdb",
   "author": {
     "name": "Sergey Bershadsky",
@@ -9,5 +9,13 @@
   "license": "MIT",
   "repository": "https://github.com/sergio-bershadsky/secondbrain-db",
   "homepage": "https://github.com/sergio-bershadsky/secondbrain-db",
-  "keywords": ["markdown", "knowledge-base", "orm", "semantic-search", "yaml", "integrity", "knowledge-graph"]
+  "keywords": [
+    "markdown",
+    "knowledge-base",
+    "orm",
+    "semantic-search",
+    "yaml",
+    "integrity",
+    "knowledge-graph"
+  ]
 }

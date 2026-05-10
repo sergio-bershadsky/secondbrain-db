@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "secondbrain-db",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Claude Code marketplace for the secondbrain-db plugin — hooks, skills, and commands for managing markdown knowledge bases with per-md sidecar integrity",
   "owner": {
     "name": "Sergey Bershadsky",
@@ -13,7 +13,7 @@
       "name": "secondbrain-db",
       "source": "./claude-plugin",
       "description": "CLI + embeddable Go library for secondbrain-db: per-md sidecar integrity, YAML-schema ORM, knowledge graph, semantic search, parallel-PR-safe layout, auto-review hooks",
-      "version": "2.2.0",
+      "version": "2.3.0",
       "category": "productivity"
     }
   ]
