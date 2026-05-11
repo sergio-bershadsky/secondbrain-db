@@ -355,20 +355,27 @@ echo "TAMPERED" >> docs/recipes/pad-thai.md
 sbdb doctor check
 # → exits non-zero, reports "content_sha mismatch" for pad-thai
 
-# If the edit was intentional, re-sign it
-sbdb doctor sign --force
-# (or: sbdb doctor fix --recompute, which rewrites the sidecar
-#  from current on-disk state without requiring an HMAC key)
+# If the edit was intentional, reconcile in one step
+sbdb doctor heal --i-meant-it
 
 # If it was accidental, revert it
 git checkout docs/recipes/pad-thai.md
 ```
 
-By default `doctor check` only audits files that differ from `HEAD` (modified, staged, untracked under any schema's `docs_dir`). Pass `--all` to walk the entire knowledge base. The premise: committed history was already verified, so re-scanning thousands of clean files on every invocation is wasteful — `--all` is for periodic full audits or recovery after an out-of-band edit lands in main.
+`doctor heal` is sugar over the two primitives below: it runs check, recomputes virtual fields from the on-disk markdown, then re-signs sidecars in lockstep. The `--i-meant-it` flag is the safety acknowledgement — without it, tamper exits 6 with a message instead of silently re-signing. Use `--id <id>` (repeatable), `--since <git-ref>`, or `--all` to scope.
 
-Exit codes from `doctor check`:
-- `0` — clean
-- non-zero — drift detected; the JSON output enumerates per-doc causes (`content_sha mismatch`, `frontmatter_sha mismatch`, `record_sha mismatch`, `bad_sig`, `missing-sidecar`, `missing-md`).
+The underlying primitives are still available if you want them surgically:
+
+- `sbdb doctor fix --recompute` — rewrites sidecars from current on-disk state. Does **not** evaluate virtuals (so `record_sha` may freeze stale derived state) and does not require an HMAC key.
+- `sbdb doctor sign --force` — re-signs sidecars; requires the HMAC key.
+
+For ad-hoc recovery after a hand-edit, `heal` is what you want. Reach for the primitives when scripting a specific step.
+
+By default `doctor check` and `heal` only audit files that differ from `HEAD` (modified, staged, untracked under any schema's `docs_dir`). Pass `--all` to walk the entire knowledge base. The premise: committed history was already verified, so re-scanning thousands of clean files on every invocation is wasteful — `--all` is for periodic full audits or recovery after an out-of-band edit lands in main.
+
+Exit codes:
+- `doctor check` — `0` clean, non-zero with per-doc drift causes in the JSON output (`content_sha mismatch`, `frontmatter_sha mismatch`, `record_sha mismatch`, `bad_sig`, `missing-sidecar`, `missing-md`).
+- `doctor heal` — `0` after reconciliation; `6` if tamper is detected without `--i-meant-it`.
 
 ### Step 10: Use multiple schemas in one project
 
@@ -629,36 +636,38 @@ Two file-system effects per save: the `<id>.md` and its sibling `<id>.yaml` side
 
 ### Doctor flow
 
-What `sbdb doctor check` and `sbdb doctor fix --recompute` do, in order:
+Three subcommands operate on the same set of paths (scoped via GitScope by default, or the whole tree with `--all`). `check` is read-only; `fix` / `sign` are the primitives that rewrite a sidecar; `heal` is the composed flow callers (humans and the post-fix Stop hook) reach for.
 
 ```
-        sbdb doctor check                       sbdb doctor fix --recompute
-        ─────────────────                       ───────────────────────────
-              │                                            │
-              v                                            v
-   ┌──────────────────────┐                  ┌─────────────────────────┐
-   │ load schema(s)       │                  │ same load steps         │
-   │ scope paths via      │                  └────────────┬────────────┘
-   │ GitScope (default    │                               │
-   │ uncommitted-only)    │                               v
-   │ or walker (--all)    │                  ┌─────────────────────────┐
-   └─────────┬────────────┘                  │ for each .md in scope:  │
-             │                                │  parse fm + body       │
-             v                                │  recompute SHAs        │
-   ┌──────────────────────┐                  │  rewrite <id>.yaml     │
-   │ for each .md in     │                   │  (HMAC-sign if key      │
-   │ scope:               │                  │   configured)           │
-   │  load <id>.yaml      │                  └─────────────┬───────────┘
-   │  recompute fm + body │                                │
-   │  + record SHAs       │                                v
-   │  compare; report     │                            Exit 0
-   │  drift bits          │
-   └─────────┬────────────┘
-             v
-       Exit:
-       0 = clean
-       1 = drift detected (per-doc causes in JSON output)
+   sbdb doctor check          sbdb doctor fix --recompute / sign --force        sbdb doctor heal
+   ─────────────────          ─────────────────────────────────────────         ────────────────
+          │                                          │                                  │
+          v                                          v                                  v
+  ┌──────────────────┐                  ┌──────────────────────────┐         ┌──────────────────┐
+  │ load schema(s)   │                  │ same load + scope steps  │         │ same load steps; │
+  │ scope paths via  │                  └────────────┬─────────────┘         │ accept --id /    │
+  │ GitScope or      │                               │                       │ --since / --all  │
+  │ walker (--all)   │                               v                       └────────┬─────────┘
+  └─────────┬────────┘                  ┌──────────────────────────┐                  │
+            │                            │ for each .md in scope:   │                  v
+            v                            │  parse fm + body         │         ┌──────────────────┐
+  ┌──────────────────┐                  │  recompute hashes         │         │ run check on     │
+  │ for each .md:    │                  │  (fix skips virtuals)     │         │ each path, then  │
+  │  load sidecar    │                  │  rewrite <id>.yaml        │         │ branch per doc:  │
+  │  recompute SHAs  │                  │  (sign requires HMAC key) │         │  drift  → heal   │
+  │  compare & emit  │                  └────────────┬─────────────┘         │  tamper → needs  │
+  │  drift / tamper  │                               │                       │   --i-meant-it   │
+  │  bits            │                               v                       │  clean → skip    │
+  └─────────┬────────┘                          Exit 0                       │ recompute virts  │
+            v                                                                │ before re-sign   │
+        Exit:                                                                └────────┬─────────┘
+        0 = clean                                                                     v
+        1 = drift                                                              Exit 0, or 6 if
+                                                                                tamper without
+                                                                                --i-meant-it
 ```
+
+`heal` is the load-bearing recovery command for most users — it composes the primitives in the right order (virtuals before signing) and gates tamper behind an explicit acknowledgement. The post-fix Stop hook in the Claude plugin invokes it with `--since HEAD --i-meant-it` at end of turn.
 
 Default scope is the working-tree diff (modified + staged + untracked under any schema's `docs_dir`). `--all` audits everything. Outside a git repo, doctor falls back to `--all` with a stderr notice.
 
