@@ -75,34 +75,53 @@ sbdb delete -s notes --id hello --yes
 
 ## Schema format
 
-Schemas live in `schemas/*.yaml`:
+Schemas live in `schemas/*.yaml` and are valid **JSON Schema 2020-12** documents with a small set of `x-*` extension keywords for sbdb-specific concepts. A stock JSON Schema validator (e.g. `ajv`) accepts them; editor LSPs (yaml-language-server, IntelliJ, VS Code) provide autocomplete and diagnostics out of the box.
 
 ```yaml
-version: 1
-entity: notes
-docs_dir: docs/notes
-filename: "{id}.md"
-id_field: id
-integrity: strict
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: sbdb://notes
+x-schema-version: 1
+x-entity: notes
+x-storage: { docs_dir: docs/notes, filename: "{id}.md" }
+x-id: id
+x-integrity: strict
 
-fields:
-  id:      { type: string, required: true }
-  created: { type: date, required: true }
-  status:  { type: enum, values: [active, archived], default: active }
-  tags:    { type: list, items: { type: string } }
-
-virtuals:
-  title:
-    returns: string
-    source: |
-      def compute(content, fields):
-          for line in content.splitlines():
-              if line.startswith("# "):
-                  return line.removeprefix("# ").strip()
-          return fields["id"]
+type: object
+required: [id, created]
+properties:
+  id:      { type: string, pattern: "^[a-z0-9-]+$" }
+  created: { type: string, format: date }
+  status:  { enum: [active, archived], default: active }
+  tags:    { type: array, items: { type: string } }
+  parent:  { $ref: "sbdb://notes#/properties/id" }   # foreign key
+  title:                                             # virtual field
+    type: string
+    readOnly: true
+    x-compute:
+      source: |
+        def compute(content, fields):
+            for line in content.splitlines():
+                if line.startswith("# "):
+                    return line.removeprefix("# ").strip()
+            return fields["id"]
 ```
 
-For the full schema reference and migration guide, see [docs/guide/schemas.md](docs/guide/schemas.md).
+| Keyword | Where | Meaning |
+|---|---|---|
+| `x-schema-version` | top | integer (or `"major.minor"`) tracking schema evolution |
+| `x-entity` | top | entity name (slug); used in directory paths and event buckets |
+| `x-storage` | top | `{docs_dir, filename, records_dir?}` — where files live |
+| `x-id` | top | name of the id property |
+| `x-integrity` | top | `strict` \| `warn` \| `off` |
+| `x-partition` | top | `{mode: none\|monthly, field?: string}` |
+| `x-events` | top | event bucket + types projected by `sbdb events emit` |
+| `x-compute` | per-property | virtual computation block (Starlark) |
+
+Foreign-key references are pure JSON Schema `$ref` pointing at `sbdb://<entity>#/properties/<id>`. The link graph derives entity edges from these URIs.
+
+A legacy dialect (`entity:`/`fields:` at the top level instead of `x-*` extensions) is still parsed for backward compatibility; the loader auto-detects which dialect a file uses. Migrate with `sbdb schema migrate --in-place schemas/<file>.yaml`. New schemas should use the JSON Schema dialect — that's what the rest of this README assumes.
+
+For the full schema reference, evolution guardrails, and migration guide, see [docs/guide/schemas.md](docs/guide/schemas.md).
 
 ## Tutorial: building a custom schema from scratch
 
@@ -133,71 +152,93 @@ my-recipes/
 Think about what fields your entity needs. For recipes:
 
 - **Scalar fields** (queryable from frontmatter): `slug`, `created`, `cuisine`, `difficulty`, `prep_time`
-- **Complex fields** (frontmatter only): `ingredients` (list of objects), `tags`
+- **Complex fields** (frontmatter only): `ingredients` (array of objects), `tags`
 - **Virtual fields** (computed from content): `title`, `step_count`
 
 Create `schemas/recipes.yaml`:
 
 ```yaml
-version: 1
-entity: recipes
-docs_dir: docs/recipes
-filename: "{slug}.md"
-id_field: slug
-integrity: strict
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: sbdb://recipes
+x-schema-version: 1
+x-entity: recipes
+x-storage: { docs_dir: docs/recipes, filename: "{slug}.md" }
+x-id: slug
+x-integrity: strict
 
-fields:
-  slug:       { type: string, required: true }
-  created:    { type: date, required: true }
-  cuisine:    { type: string, required: true }
-  difficulty: { type: enum, values: [easy, medium, hard], default: easy }
-  prep_time:  { type: int }
-  tags:       { type: list, items: { type: string } }
+type: object
+required: [slug, created, cuisine]
+properties:
+  slug:       { type: string, pattern: "^[a-z0-9-]+$" }
+  created:    { type: string, format: date }
+  cuisine:    { type: string }
+  difficulty: { enum: [easy, medium, hard], default: easy }
+  prep_time:  { type: integer }
+  tags:       { type: array, items: { type: string } }
   ingredients:
-    type: list
+    type: array
     items:
       type: object
-      fields:
-        name:     { type: string, required: true }
-        amount:   { type: string, required: true }
-        unit:     { type: string }
+      required: [name, amount]
+      properties:
+        name:   { type: string }
+        amount: { type: string }
+        unit:   { type: string }
 ```
 
-Each field declaration follows this format:
+Property declarations are standard JSON Schema. Common shapes:
 
-```yaml
-field_name: { type: <type>, required: <bool>, default: <value> }
-```
+| Want | Write |
+|---|---|
+| Required string | `name: { type: string }` plus `required: [name]` at the parent level |
+| Integer | `{ type: integer }` |
+| Floating-point number | `{ type: number }` |
+| Boolean | `{ type: boolean }` |
+| Date | `{ type: string, format: date }` |
+| Datetime | `{ type: string, format: date-time }` |
+| Closed enum | `{ enum: [a, b, c], default: a }` |
+| List | `{ type: array, items: { ... } }` |
+| Nested object | `{ type: object, required: [...], properties: { ... } }` |
+| Foreign key | `{ $ref: "sbdb://<entity>#/properties/<id>" }` |
+| Pattern check | `{ type: string, pattern: "^[a-z0-9-]+$" }` |
 
-Supported types: `string`, `int`, `float`, `bool`, `date`, `datetime`, `enum`, `list`, `object`.
+Anything JSON Schema 2020-12 supports (oneOf, format, minLength, etc.) is accepted by the validator — sbdb only intercepts the `x-*` extension keys.
 
 ### Step 3: Add virtual fields
 
-Virtual fields are Starlark functions that extract or compute values from the markdown body. Add them to your schema:
+Virtual fields are Starlark functions that extract or compute values from the markdown body. In the JSON Schema dialect, a virtual is a property with `readOnly: true` and an `x-compute` block — JSON Schema validators accept it as a normal read-only property; sbdb evaluates the Starlark source at write time and materialises the result into the frontmatter.
+
+Add them to your schema's `properties`:
 
 ```yaml
-# append to schemas/recipes.yaml
+# inside properties: in schemas/recipes.yaml
 
-virtuals:
+properties:
+  # … the regular fields from Step 2 …
+
   title:
-    returns: string
-    source: |
-      def compute(content, fields):
-          for line in content.splitlines():
-              if line.startswith("# "):
-                  return line.removeprefix("# ").strip()
-          return fields["slug"]
+    type: string
+    readOnly: true
+    x-compute:
+      source: |
+        def compute(content, fields):
+            for line in content.splitlines():
+                if line.startswith("# "):
+                    return line.removeprefix("# ").strip()
+            return fields["slug"]
 
   step_count:
-    returns: int
-    source: |
-      def compute(content, fields):
-          count = 0
-          for line in content.splitlines():
-              stripped = line.strip()
-              if len(stripped) > 2 and stripped[0].isdigit() and stripped[1] == ".":
-                  count += 1
-          return count
+    type: integer
+    readOnly: true
+    x-compute:
+      source: |
+        def compute(content, fields):
+            count = 0
+            for line in content.splitlines():
+                stripped = line.strip()
+                if len(stripped) > 2 and stripped[0].isdigit() and stripped[1] == ".":
+                    count += 1
+            return count
 ```
 
 Rules for Starlark virtuals:
@@ -206,6 +247,7 @@ Rules for Starlark virtuals:
 - `fields` is a dict of all field values
 - `re.findall(pattern, text)` is available for regex
 - No file I/O, no imports, no network — fully sandboxed
+- The property's declared `type` is how sbdb interprets the return value (string, integer, array, etc.)
 
 ### Step 4: Update your config
 
@@ -400,71 +442,78 @@ Each schema has its own `docs_dir` and per-doc sidecars — they don't interfere
 
 ### Schema design reference
 
-**Field type routing (automatic):**
+**All properties live in the markdown's YAML frontmatter**, including materialised virtual outputs. Queries walk `docs_dir` and read frontmatter directly — no separate index file in git. For very large knowledge bases an opt-in local cache may land in a future release; for now plan on this being concurrent file reads (acceptable up to ~10k docs).
 
-| Field type | Stored in |
-|---|---|
-| `string`, `int`, `float`, `bool`, `date`, `enum` | frontmatter |
-| `list`, `object` | frontmatter |
-| `virtual` (scalar return) | frontmatter (materialised on save) |
-| `virtual` (complex return) | frontmatter |
-
-All fields live in the markdown's YAML frontmatter. Queries walk `docs_dir` and read frontmatter directly — no separate index file in git. For very large knowledge bases an opt-in local cache may land in a future release; for now plan on this being concurrent file reads (acceptable up to ~10k docs).
-
-**Virtual field patterns:**
+**Virtual field patterns** (each block goes under `properties:` with `readOnly: true` and `x-compute`):
 
 ```yaml
 # Extract title from first heading
 title:
-  returns: string
-  source: |
-    def compute(content, fields):
-        for line in content.splitlines():
-            if line.startswith("# "):
-                return line.removeprefix("# ").strip()
-        return fields["slug"]
+  type: string
+  readOnly: true
+  x-compute:
+    source: |
+      def compute(content, fields):
+          for line in content.splitlines():
+              if line.startswith("# "):
+                  return line.removeprefix("# ").strip()
+          return fields["slug"]
 
 # Count words
 word_count:
-  returns: int
-  source: |
-    def compute(content, fields):
-        return len(content.split())
+  type: integer
+  readOnly: true
+  x-compute:
+    source: |
+      def compute(content, fields):
+          return len(content.split())
 
 # Extract ticket references
 ticket_refs:
-  returns: list[string]
-  source: |
-    def compute(content, fields):
-        return re.findall("[A-Z]+-[0-9]+", content)
+  type: array
+  items: { type: string }
+  readOnly: true
+  x-compute:
+    source: |
+      def compute(content, fields):
+          return re.findall("[A-Z]+-[0-9]+", content)
 
 # Parse a structured marker from the body
 status:
-  returns: string
-  source: |
-    def compute(content, fields):
-        for line in content.splitlines():
-            if "**Status:**" in line:
-                return line.split("**Status:**")[1].strip().lower()
-        return "draft"
+  type: string
+  readOnly: true
+  x-compute:
+    source: |
+      def compute(content, fields):
+          for line in content.splitlines():
+              if "**Status:**" in line:
+                  return line.split("**Status:**")[1].strip().lower()
+          return "draft"
 ```
 
-**All schema options:**
+**Top-level keys at a glance:**
 
 ```yaml
-version: 1                    # schema format version (always 1)
-entity: <name>                # entity name, used in directory paths
-docs_dir: <path>              # where .md files live (relative to project root)
-filename: "{field}.md"        # filename template with {field} placeholders
-id_field: <field>             # which field is the primary key (default: "id")
-integrity: strict             # "strict", "warn", or "off"
+$schema: https://json-schema.org/draft/2020-12/schema   # canonical dialect URI
+$id: sbdb://<entity>                                     # stable identifier; used by $ref
+x-schema-version: 1                                      # integer or "major.minor"
+x-entity: <name>                                         # entity name (slug)
+x-storage:                                               # filesystem layout
+  docs_dir: <path>                                       # where .md files live
+  filename: "{field}.md"                                 # template with property placeholders
+  records_dir: <path>                                    # optional; legacy v1 index dir
+x-id: <property>                                         # primary-key property (default "id")
+x-integrity: strict                                      # "strict" | "warn" | "off"
+x-partition: { mode: monthly, field: created }           # optional; bucketing for events
+x-events: { bucket: <name>, types: [created, updated] }  # optional; event projection config
 
-# Deprecated (still parsed for v1 compatibility, ignored at runtime;
-# the loader prints a stderr notice. Targeted for removal in v3):
-# records_dir: <path>
-# partition: none|monthly
-# date_field: <field>
+type: object
+required: [<prop>, ...]
+properties:
+  <prop>: { ... JSON Schema ... }
 ```
+
+The legacy dialect (`entity:`, `fields:`, `virtuals:` at the top level) is auto-detected and still parsed for backward compatibility; the loader prints a stderr notice and `sbdb schema migrate --in-place <file>` rewrites it into the JSON Schema dialect above.
 
 ## Events
 
@@ -649,12 +698,12 @@ Three subcommands operate on the same set of paths (scoped via GitScope by defau
   │ GitScope or      │                               │                       │ --since / --all  │
   │ walker (--all)   │                               v                       └────────┬─────────┘
   └─────────┬────────┘                  ┌──────────────────────────┐                  │
-            │                            │ for each .md in scope:   │                  v
-            v                            │  parse fm + body         │         ┌──────────────────┐
-  ┌──────────────────┐                  │  recompute hashes         │         │ run check on     │
-  │ for each .md:    │                  │  (fix skips virtuals)     │         │ each path, then  │
-  │  load sidecar    │                  │  rewrite <id>.yaml        │         │ branch per doc:  │
-  │  recompute SHAs  │                  │  (sign requires HMAC key) │         │  drift  → heal   │
+            │                           │ for each .md in scope:   │                  v
+            v                           │  parse fm + body         │         ┌──────────────────┐
+  ┌──────────────────┐                  │  recompute hashes        │         │ run check on     │
+  │ for each .md:    │                  │  (fix skips virtuals)    │         │ each path, then  │
+  │  load sidecar    │                  │  rewrite <id>.yaml       │         │ branch per doc:  │
+  │  recompute SHAs  │                  │  (sign requires HMAC key)│         │  drift  → heal   │
   │  compare & emit  │                  └────────────┬─────────────┘         │  tamper → needs  │
   │  drift / tamper  │                               │                       │   --i-meant-it   │
   │  bits            │                               v                       │  clean → skip    │
