@@ -879,6 +879,127 @@ git log                →  projected on demand by `sbdb events emit` into a JSO
 parallel PRs           →  conflict-free merges (per-doc sidecars; no aggregate index)
 ```
 
+## External sync (publishing to Confluence / Jira / Slack)
+
+> **Status: in design.** The shape below is the agreed model; commands and
+> file formats are stable enough to write against but not yet shipped. See
+> repo issues for tracking.
+
+Many sbdb docs have a counterpart in an external system: an ADR mirrored to a
+Confluence page, a runbook linked to a Jira ticket, a meeting note pinned as
+a Slack canvas. sbdb stays the source of truth; the external service holds a
+*one-way* projection of what's local.
+
+The design splits concerns deliberately:
+
+- **sbdb is the bookkeeper.** It owns the schemas, the docs, the integration
+  configs, and the per-doc state sidecars. It does not talk to any external
+  API, store any credentials, or initiate any push.
+- **The integration runtime is the actor.** In practice, Claude (via MCP
+  servers for Confluence, Jira, Slack) is the only thing that performs the
+  external calls. It reads sbdb's primitives, talks to the service, and
+  writes results back via `sbdb sync state set`.
+
+### Three domains, three file kinds
+
+| Lives in | Owner | Purpose |
+|---|---|---|
+| `schemas/<entity>.yaml` | Schema author | Defines the doc's shape. Integration-blind. |
+| `.sbdb/integrations/<name>.yaml` | Platform / ops | Declares which entities publish to which service and how. One file per integration. |
+| Doc frontmatter (`sync.<integration>.<field>`) | Doc author | Holds the *target ID* (Confluence page id, Jira issue key, …). |
+| `<doc>.integrations.yaml` (sidecar) | sbdb (writes) / runtime (consumes) | Records `last_push`, `last_check`, `last_error` per integration. Not part of the doc's integrity hash. |
+
+Example — a `notes` doc that mirrors to Confluence and Jira:
+
+```yaml
+# .sbdb/integrations/confluence.yaml
+integration: confluence
+applies_to:
+  notes:
+    target_ref: sync.confluence.pageId
+    required: false
+    payload:
+      title: { from: frontmatter.title }
+      body:  { from: rendered_markdown }
+```
+
+```markdown
+<!-- docs/notes/launch-checklist.md -->
+---
+id: launch-checklist
+title: Launch Checklist
+sync:
+  confluence: { pageId: "98765" }
+  jira:       { issueKey: "ENG-42" }
+---
+
+# Launch Checklist
+…
+```
+
+```yaml
+# docs/notes/launch-checklist.integrations.yaml (sbdb-managed)
+confluence:
+  target_id: "98765"
+  last_push:
+    doc_hash: "sha256:…"
+    at: "2026-05-20T11:00:00Z"
+    remote_revision: "7"
+    actor: "claude-code"
+  last_check: null
+  last_error: null
+jira:
+  target_id: "ENG-42"
+  last_push: { … }
+```
+
+### Commands sbdb provides
+
+All explicit. No hooks, no auto-push, no scheduled polling.
+
+```
+sbdb sync check                       # local-only drift report (JSON)
+sbdb sync targets -s notes --id X     # resolve back-refs for one doc
+sbdb sync state get  -s notes --id X --integration confluence
+sbdb sync state set  -s notes --id X --integration confluence \
+                     --published-hash <h> --remote-revision <r> --at <ts>
+```
+
+`sbdb sync check` is local-only — it never makes network calls. It compares
+the doc's current hash to the sidecar's `last_push.doc_hash` and reports one
+of `in_sync`, `local_drift`, `remote_drift`, `both_drift`, or
+`never_published` per (doc, integration) pair. Exit code is non-zero when
+drift is present so CI can opt in to gating.
+
+### Guardrails
+
+Passive only. sbdb does not block your commits, edits, or AI agent activity.
+
+- **Schema-time validation.** A malformed integration config (mapping
+  references a field that doesn't exist; `applies_to` entry points at a
+  non-existent entity) is rejected at load time.
+- **Doc-time validation.** If an integration declares `required: true`, every
+  doc of that entity must declare a non-empty target at the configured
+  back-ref path. Doc creation/update fails otherwise.
+- **No automation.** No pre-commit hooks block you. No scheduler polls the
+  external service. Drift is detected only when you run the command.
+- **Stop-hook surfacing.** The existing Claude Code Stop hook (which runs
+  `sbdb doctor heal`) is extended to also run `sbdb sync check`. The drift
+  report is surfaced to Claude, who decides whether to ask the user "doc X
+  has unpublished changes for Confluence page Y — push now?" The user
+  remains in control of every external action.
+
+### Why this split
+
+- **sbdb stays portable.** No HTTP clients, no service-specific code, no
+  token storage. The same binary works whether you have integrations or not.
+- **Integrations are pluggable.** Add a new one by dropping a YAML file in
+  `.sbdb/integrations/`. Remove one by deleting the file. Schemas never
+  change.
+- **Claude is already the runtime you want.** Your agent already has MCP
+  servers for these services. Letting sbdb defer to MCP for the actual
+  network calls means no duplicate integration surface to maintain.
+
 ## AI agent integration
 
 Every command outputs structured JSON when piped or with `--format json`. Exit codes are stable (0=ok, 2=not found, 3=validation, 4=drift, 6=tamper). Designed as a CLI API for Claude Code and other AI agents.
