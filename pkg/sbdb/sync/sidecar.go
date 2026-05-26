@@ -64,7 +64,7 @@ func WriteSidecar(mdPath string, sc Sidecar) error {
 		return fmt.Errorf("write temp: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		return err
+		return fmt.Errorf("close temp: %w", err)
 	}
 	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("rename to %s: %w", path, err)

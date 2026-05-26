@@ -121,3 +121,34 @@ func TestRecordPushClearsError(t *testing.T) {
 		t.Errorf("RecordPush did not clear LastError: %+v", got["confluence"].LastError)
 	}
 }
+
+func TestRecordCheckPreservesPushAndError(t *testing.T) {
+	dir := t.TempDir()
+	md := filepath.Join(dir, "hello.md")
+	prior := Sidecar{
+		"confluence": SidecarSection{
+			TargetID:  "12345",
+			LastPush:  &PushRecord{DocHash: "sha256:abc", At: "2026-05-20T10:00:00Z", RemoteRevision: "1", Actor: "claude"},
+			LastError: &ErrorRecord{At: "2026-05-21T10:00:00Z", Stage: "push", Message: "old failure"},
+		},
+	}
+	if err := WriteSidecar(md, prior); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordCheck(md, "confluence", CheckRecord{
+		At: "2026-05-26T10:00:00Z", Result: "local_drift", CurrentDocHash: "sha256:def",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := ReadSidecar(md)
+	s := got["confluence"]
+	if s.LastPush == nil || s.LastPush.RemoteRevision != "1" {
+		t.Errorf("RecordCheck clobbered LastPush: %+v", s.LastPush)
+	}
+	if s.LastError == nil || s.LastError.Message != "old failure" {
+		t.Errorf("RecordCheck clobbered LastError: %+v", s.LastError)
+	}
+	if s.LastCheck == nil || s.LastCheck.Result != "local_drift" {
+		t.Errorf("RecordCheck did not write LastCheck: %+v", s.LastCheck)
+	}
+}
