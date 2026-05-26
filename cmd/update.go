@@ -62,6 +62,25 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 
 	format := clir.OutputFormat(cfg)
 
+	projRoot := flagBasePath
+	if projRoot == "" {
+		projRoot, _ = os.Getwd()
+	}
+	{
+		cur, err := repo.Get(ctx, updateID)
+		if err != nil {
+			if errors.Is(err, sbdb.ErrNotFound) {
+				output.PrintError(format, "NOT_FOUND", err.Error(), nil)
+				os.Exit(2)
+			}
+			return err
+		}
+		after := applyDocUpdates(cur, inputFile, contentFile, fields)
+		if err := enforceRequiredTargets(projRoot, cfg.DefaultSchema, after.Frontmatter); err != nil {
+			return err
+		}
+	}
+
 	if flagDryRun {
 		cur, err := repo.Get(ctx, updateID)
 		if err != nil {

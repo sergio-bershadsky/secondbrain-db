@@ -97,6 +97,14 @@ func runDoctorCheck(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+
+	// Validate integration configs against the set of known entity dirs.
+	if _, known, derr := discoverEntityDirs(filepath.Join(cfg.BasePath, "schemas")); derr == nil {
+		if err := validateAllIntegrationConfigs(cfg.BasePath, known); err != nil {
+			return err
+		}
+	}
+
 	docsDir := filepath.Join(cfg.BasePath, s.DocsDir)
 
 	paths, err := scopedDocPaths(cfg.BasePath, docsDir, doctorAll)
