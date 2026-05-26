@@ -89,3 +89,44 @@ func TestValidateConfigPayloadFieldNeitherFromNorConst(t *testing.T) {
 		t.Fatalf("want neither-from-nor-const error, got %v", err)
 	}
 }
+
+func TestValidateConfigBothFromAndConst(t *testing.T) {
+	c := IntegrationConfig{
+		Integration: "confluence",
+		AppliesTo: map[string]EntityBinding{
+			"notes": {TargetRef: "sync.x.id", Payload: map[string]PayloadField{
+				"title": {From: "frontmatter.title", Const: "literal"},
+			}},
+		},
+	}
+	err := ValidateConfig(c, map[string]bool{"notes": true})
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("want mutually-exclusive error, got %v", err)
+	}
+}
+
+func TestValidateConfigMissingIntegrationField(t *testing.T) {
+	c := IntegrationConfig{
+		Integration: "",
+		AppliesTo: map[string]EntityBinding{
+			"notes": {TargetRef: "sync.x.id", Payload: map[string]PayloadField{"t": {From: "frontmatter.title"}}},
+		},
+	}
+	err := ValidateConfig(c, map[string]bool{"notes": true})
+	if err == nil || !strings.Contains(err.Error(), "integration") {
+		t.Fatalf("want missing-integration error, got %v", err)
+	}
+}
+
+func TestValidateConfigEmptyPayload(t *testing.T) {
+	c := IntegrationConfig{
+		Integration: "confluence",
+		AppliesTo: map[string]EntityBinding{
+			"notes": {TargetRef: "sync.x.id", Payload: map[string]PayloadField{}},
+		},
+	}
+	err := ValidateConfig(c, map[string]bool{"notes": true})
+	if err == nil || !strings.Contains(err.Error(), "at least one field") {
+		t.Fatalf("want empty-payload error, got %v", err)
+	}
+}

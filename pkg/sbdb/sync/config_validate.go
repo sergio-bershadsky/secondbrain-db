@@ -18,12 +18,13 @@ func isKnownPayloadSource(from string) bool {
 	}
 	// frontmatter.<anything> is allowed; the actual path is checked at
 	// payload-resolution time against the live doc.
-	return strings.HasPrefix(from, "frontmatter.")
+	const prefix = "frontmatter."
+	return strings.HasPrefix(from, prefix) && len(from) > len(prefix)
 }
 
 // ValidateConfig checks one IntegrationConfig against the set of known
-// entity names from schemas. Returns a non-nil error describing all
-// problems found (does NOT stop at the first).
+// entity names from schemas. Returns nil if the config is valid, otherwise
+// an error describing all problems found (does not stop at the first).
 func ValidateConfig(c IntegrationConfig, knownEntities map[string]bool) error {
 	var problems []string
 	if c.Integration == "" {
