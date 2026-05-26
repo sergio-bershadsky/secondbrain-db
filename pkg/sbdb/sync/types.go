@@ -74,13 +74,16 @@ type Sidecar map[string]SidecarSection
 
 // SidecarSection is the state for one (doc, integration) pair.
 type SidecarSection struct {
-	TargetID  string       `yaml:"target_id"`
-	LastPush  *PushRecord  `yaml:"last_push"`
-	LastCheck *CheckRecord `yaml:"last_check"`
-	LastError *ErrorRecord `yaml:"last_error"`
+	TargetID  string       `yaml:"target_id,omitempty"`
+	LastPush  *PushRecord  `yaml:"last_push,omitempty"`
+	LastCheck *CheckRecord `yaml:"last_check,omitempty"`
+	LastError *ErrorRecord `yaml:"last_error,omitempty"`
 }
 
 // PushRecord is the durable record of the last successful push.
+//
+// All `At` fields across records are RFC3339 UTC timestamps written and read
+// as strings. TODO(task-N): centralise format constant when first consumer needs it.
 type PushRecord struct {
 	DocHash        string `yaml:"doc_hash"`
 	At             string `yaml:"at"`
@@ -91,7 +94,9 @@ type PushRecord struct {
 // CheckRecord is the transient record of the last drift check. Overwritten
 // on every check; not durable.
 type CheckRecord struct {
-	At                     string `yaml:"at"`
+	At string `yaml:"at"`
+	// TODO(task-9/12): consider typing as DriftResult with custom YAML marshalling.
+	// Loader currently re-parses via ParseDriftResult.
 	Result                 string `yaml:"result"`
 	RemoteRevisionObserved string `yaml:"remote_revision_observed,omitempty"`
 	CurrentDocHash         string `yaml:"current_doc_hash,omitempty"`
