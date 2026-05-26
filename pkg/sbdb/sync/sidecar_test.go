@@ -54,3 +54,70 @@ func TestSidecarPathFromMd(t *testing.T) {
 		t.Fail()
 	}
 }
+
+func TestWriteSidecarRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	md := filepath.Join(dir, "hello.md")
+	sc := Sidecar{
+		"confluence": SidecarSection{
+			TargetID: "12345",
+			LastPush: &PushRecord{DocHash: "sha256:abc", At: "2026-05-26T10:00:00Z", RemoteRevision: "7", Actor: "claude-code"},
+		},
+	}
+	if err := WriteSidecar(md, sc); err != nil {
+		t.Fatalf("WriteSidecar = %v", err)
+	}
+	got, err := ReadSidecar(md)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["confluence"].LastPush.RemoteRevision != "7" {
+		t.Errorf("round-trip lost remote_revision")
+	}
+}
+
+func TestRecordPushPreservesPriorOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	md := filepath.Join(dir, "hello.md")
+	prior := Sidecar{
+		"confluence": SidecarSection{
+			TargetID: "12345",
+			LastPush: &PushRecord{DocHash: "sha256:old", At: "2026-05-20T10:00:00Z", RemoteRevision: "1", Actor: "claude"},
+		},
+	}
+	WriteSidecar(md, prior)
+
+	// Failed push: must NOT overwrite LastPush.
+	err := RecordError(md, "confluence", ErrorRecord{
+		At: "2026-05-26T11:00:00Z", Stage: "push", Message: "401 expired", AttemptedDocHash: "sha256:new",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := ReadSidecar(md)
+	s := got["confluence"]
+	if s.LastPush == nil || s.LastPush.RemoteRevision != "1" {
+		t.Errorf("RecordError clobbered LastPush: %+v", s.LastPush)
+	}
+	if s.LastError == nil || s.LastError.Message != "401 expired" {
+		t.Errorf("LastError not written: %+v", s.LastError)
+	}
+}
+
+func TestRecordPushClearsError(t *testing.T) {
+	dir := t.TempDir()
+	md := filepath.Join(dir, "hello.md")
+	WriteSidecar(md, Sidecar{
+		"confluence": SidecarSection{TargetID: "12345", LastError: &ErrorRecord{Message: "old"}},
+	})
+	err := RecordPush(md, "confluence", "12345", PushRecord{
+		DocHash: "sha256:new", At: "2026-05-26T12:00:00Z", RemoteRevision: "2", Actor: "claude",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := ReadSidecar(md)
+	if got["confluence"].LastError != nil {
+		t.Errorf("RecordPush did not clear LastError: %+v", got["confluence"].LastError)
+	}
+}
