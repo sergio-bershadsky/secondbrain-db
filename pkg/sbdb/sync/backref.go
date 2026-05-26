@@ -7,7 +7,8 @@ import (
 
 // ResolveBackref walks a dotted path inside a parsed frontmatter map and
 // returns the leaf as a string. Numeric leaves are coerced via fmt.Sprint.
-// Returns ok=false when the path is missing or terminates at a non-leaf.
+// Returns ok=false when the path is missing, terminates at a non-leaf, or
+// resolves to an empty string (an empty leaf is treated as missing).
 func ResolveBackref(frontmatter map[string]interface{}, path string) (string, bool) {
 	if path == "" {
 		return "", false
