@@ -97,3 +97,27 @@ func TestResolveTargetMissingButOptional(t *testing.T) {
 		t.Errorf("status = %v, want unlinked", r.Status)
 	}
 }
+
+func TestResolvePayloadFrontmatterMissingIntermediate(t *testing.T) {
+	dir := t.TempDir()
+	docPath := filepath.Join(dir, "hello.md")
+	// Doc has no `meta` key in frontmatter at all.
+	if err := os.WriteFile(docPath, []byte("---\nid: hello\n---\nbody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := IntegrationConfig{
+		Integration: "confluence",
+		AppliesTo: map[string]EntityBinding{
+			"notes": {TargetRef: "sync.confluence.pageId", Payload: map[string]PayloadField{
+				"deep": {From: "frontmatter.meta.nested.value"},
+			}},
+		},
+	}
+	r, err := ResolveDocIntegration(docPath, "notes", cfg)
+	if err != nil {
+		t.Fatalf("ResolveDocIntegration = %v", err)
+	}
+	if r.Payload["deep"] != nil {
+		t.Errorf("nested-missing path should resolve to nil, got %v", r.Payload["deep"])
+	}
+}
