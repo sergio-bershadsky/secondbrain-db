@@ -879,16 +879,16 @@ git log                →  projected on demand by `sbdb events emit` into a JSO
 parallel PRs           →  conflict-free merges (per-doc sidecars; no aggregate index)
 ```
 
-## External sync (publishing to Confluence / Jira / Slack)
+## External sync (publishing to Confluence / Jira / Notion / Slack)
 
-> **Status: in design.** The shape below is the agreed model; commands and
-> file formats are stable enough to write against but not yet shipped. See
-> repo issues for tracking.
+> **For the full how-to including worked examples, see [`docs/guide/sync.md`](docs/guide/sync.md).**
+> This section is the quick architectural overview.
 
 Many sbdb docs have a counterpart in an external system: an ADR mirrored to a
-Confluence page, a runbook linked to a Jira ticket, a meeting note pinned as
-a Slack canvas. sbdb stays the source of truth; the external service holds a
-*one-way* projection of what's local.
+Confluence page, a runbook linked to a Jira ticket, a roadmap entry in a
+Notion database, a meeting note pinned as a Slack canvas. sbdb stays the
+source of truth; the external service holds a *one-way* projection of what's
+local.
 
 The design splits concerns deliberately:
 
