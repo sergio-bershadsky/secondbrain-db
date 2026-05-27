@@ -62,6 +62,14 @@ func runCreate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	projRoot := flagBasePath
+	if projRoot == "" {
+		projRoot, _ = os.Getwd()
+	}
+	if err := enforceRequiredTargets(projRoot, cfg.DefaultSchema, fm); err != nil {
+		return err
+	}
+
 	if flagDryRun {
 		result := map[string]any{"action": "create", "data": fm, "content_length": len(content)}
 		return output.PrintData(format, result)

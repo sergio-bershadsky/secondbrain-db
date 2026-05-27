@@ -125,6 +125,19 @@ func resetFlagsForTest() {
 	healIDs = nil
 	healSince = ""
 	healAll = false
+
+	syncTargetsIDFlag = ""
+	syncStateIDFlag = ""
+	syncStateIntegrationFlag = ""
+	syncStatePublishedHash = ""
+	syncStateRemoteRevision = ""
+	syncStateAt = ""
+	syncStateActor = ""
+	syncStateCheckResult = ""
+	syncStateRemoteRevObs = ""
+	syncStateError = ""
+	syncStateErrorStage = ""
+	syncStateAttemptedHash = ""
 }
 
 // resolveConfig loads config and resolves flags.
