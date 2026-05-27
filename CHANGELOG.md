@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.4.0](https://github.com/sergio-bershadsky/secondbrain-db/compare/v2.3.0...v2.4.0) (2026-05-27)
+
+
+### Features
+
+* **sync:** external-sync bookkeeping (Phase 1 — CLI) ([#63](https://github.com/sergio-bershadsky/secondbrain-db/issues/63)) ([3e303d6](https://github.com/sergio-bershadsky/secondbrain-db/commit/3e303d617610901cc5330b5181e12c1929e1230f))
+
 ## [2.3.0](https://github.com/sergio-bershadsky/secondbrain-db/compare/v2.2.0...v2.3.0) (2026-05-10)
 
 
