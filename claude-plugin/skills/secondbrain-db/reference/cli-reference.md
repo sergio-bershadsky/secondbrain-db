@@ -104,3 +104,24 @@ sbdb schema list                    # available schemas
 sbdb schema show --format json      # active schema details
 sbdb schema json-schema             # JSON Schema output
 ```
+
+## sync
+External-sync bookkeeping. sbdb never calls external services — these commands
+let an integration runtime (Claude + MCP) read declared intent and record what
+it did. Output is raw JSON (not the `{version,data}` envelope). See the
+`secondbrain-db-sync` skill for the end-to-end workflow.
+
+```bash
+sbdb sync check --format json          # local-only drift report; exit 0=clean, 4=drift, 1=config error
+sbdb sync targets -s notes --id hello  # resolved back-refs for one doc, all integrations
+sbdb sync state get -s notes --id hello --integration confluence   # resolved payload + sidecar state
+sbdb sync state set -s notes --id hello --integration confluence \
+  --published-hash <h> --remote-revision <r> --at <ts> [--actor <a>]  # record successful push
+sbdb sync state set ... --check-result <enum> --at <ts> [--remote-revision-observed <r>]  # record observation
+sbdb sync state set ... --error "<msg>" --stage <push|check> --at <ts> [--attempted-doc-hash <h>]  # record failure
+```
+
+`check` results: `in_sync`, `local_drift`, `remote_drift`, `both_drift`, `never_published`.
+`--at` is required on every `state set` (RFC3339 UTC, e.g. `date -u +%Y-%m-%dT%H:%M:%SZ`).
+Integration configs live in `.sbdb/integrations/<name>.yaml`; per-doc state lives
+in `<doc>.integrations.yaml` (managed by sbdb — never hand-edit).
