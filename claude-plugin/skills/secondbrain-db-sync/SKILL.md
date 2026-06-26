@@ -72,12 +72,39 @@ Exit code **4** means drift is present; **0** means everything is in sync;
 | `remote_drift` | Remote advanced since last push (only you can observe this; sbdb never polls) | Offer to re-publish — local is source of truth and will overwrite |
 | `both_drift` | Both changed | Same as `remote_drift`: local wins per design |
 
-### Step 3 — Ask the user
+### Step 3 — Confirm with the user
 
-Per doc, per integration. Do not batch silently.
+Show the full set of drifted docs grouped by integration, then ask **once**
+for the whole batch. The visible list IS the granularity control: the user
+sees every doc and every target ID before confirming, so a single "yes" is
+informed consent for the batch.
 
-> "Doc `notes/launch-checklist` has local changes not yet pushed to Confluence
-> page 98765. Push now?"
+> Push the following to Confluence?
+>   - notes/launch-checklist    (local_drift)     → page 98765
+>   - notes/q3-roadmap          (never_published) → page 99001
+>   - adr/0014-event-schema     (local_drift)     → page 99102
+>
+> Push the following to Notion?
+>   - notes/research-summary    (local_drift)     → page abc-def-…
+>
+> `y` / `n` / `e` (edit list)
+
+Rules:
+
+- **Always print the full list before asking.** Never collapse to "push 4
+  docs?" — the list is the user's only chance to spot a wrong target ID.
+- **Scope follows the user's request.** "Push everything" → one prompt
+  spanning all integrations. "Push my Confluence docs" → one prompt scoped
+  to Confluence. "Push `launch-checklist`" → one prompt with one row.
+- **Only actionable drift goes in the list.** `in_sync` rows are omitted.
+  `unlinked` rows are listed *separately* as "needs a back-ref before it
+  can be pushed" — never as pushable.
+- **`e` (edit) drops rows.** If the user types `e`, ask which entries to
+  remove, then re-display the trimmed list and re-confirm. Don't push from
+  a list the user has not seen post-edit.
+- **One batch = one push session.** After the batch completes, report
+  successes and failures in the same shape as the input list, then stop.
+  Don't roll into a second batch without a fresh user instruction.
 
 ### Step 4 — Fetch the payload sbdb assembled
 
@@ -168,7 +195,10 @@ Never poll on a schedule. Only on explicit request.
 ## Hard rules
 
 - Never edit `<doc>.integrations.yaml` directly. Always `sbdb sync state set`.
-- Never push without an explicit "yes" for that specific doc and integration.
+- Never push without an explicit "yes" for the batch. The user must have
+  seen the full list of docs and target IDs *in the same exchange* where
+  they confirmed. A "yes" to a collapsed prompt ("push 4 docs?") is not
+  consent.
 - Never change a doc's `sync.<integration>.<id>` frontmatter without the
   user's instruction — that value is their declaration of which external
   object the doc maps to. Use `sbdb update` if they do ask.
