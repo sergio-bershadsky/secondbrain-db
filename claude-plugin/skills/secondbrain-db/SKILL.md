@@ -216,6 +216,15 @@ Public types: `Open`, `DB`, `Repo`, `Doc`, sentinel errors
 - `pkg/sbdb/events` — git → JSONL projection
 - `pkg/sbdb/kg` — knowledge graph with optional Embedder
 
+## External sync
+
+If the user asks to push docs to Confluence / Jira / Notion / Slack, or if the
+Stop hook surfaces `[sbdb] external sync: …` drift, use the dedicated
+**`secondbrain-db-sync`** skill. sbdb is purely the bookkeeper for sync state —
+it never makes network calls; all external pushes go through MCP servers. The
+sync skill explains the detect → ask → fetch payload → push → record-back loop
+and the `sbdb sync` command surface (`check`, `targets`, `state get`, `state set`).
+
 ## Detailed reference
 
 - [CLI Reference](reference/cli-reference.md)

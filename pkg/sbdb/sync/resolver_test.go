@@ -1,8 +1,10 @@
 package sync
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -119,5 +121,43 @@ func TestResolvePayloadFrontmatterMissingIntermediate(t *testing.T) {
 	}
 	if r.Payload["deep"] != nil {
 		t.Errorf("nested-missing path should resolve to nil, got %v", r.Payload["deep"])
+	}
+}
+
+func TestResolvedDocIntegrationJSONStateTags(t *testing.T) {
+	dir := t.TempDir()
+	docPath := filepath.Join(dir, "hello.md")
+	if err := os.WriteFile(docPath, []byte("---\nid: hello\ntitle: Hello\nsync: {confluence: {pageId: \"123\"}}\n---\nbody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Record a push so the state section is populated.
+	if err := RecordPush(docPath, "confluence", "123", PushRecord{
+		DocHash: "sha256:x", At: "2026-05-29T10:00:00Z", RemoteRevision: "1", Actor: "claude-code",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := IntegrationConfig{
+		Integration: "confluence",
+		AppliesTo:   map[string]EntityBinding{"notes": {TargetRef: "sync.confluence.pageId", Payload: map[string]PayloadField{"title": {From: "frontmatter.title"}}}},
+	}
+	r, err := ResolveDocIntegration(docPath, "notes", cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(blob)
+	// State sub-object must use snake_case JSON tags, not Go field names.
+	for _, want := range []string{`"last_push"`, `"doc_hash"`, `"remote_revision"`} {
+		if !strings.Contains(s, want) {
+			t.Errorf("JSON missing %s; got: %s", want, s)
+		}
+	}
+	for _, bad := range []string{`"LastPush"`, `"DocHash"`, `"RemoteRevision"`, `"TargetID"`} {
+		if strings.Contains(s, bad) {
+			t.Errorf("JSON leaked Go field name %s; got: %s", bad, s)
+		}
 	}
 }

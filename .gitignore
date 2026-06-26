@@ -43,3 +43,7 @@ integrity.key
 
 # Local-only planning/spec notes (not part of the repo's shipped docs)
 docs/superpowers/
+
+# Python bytecode
+__pycache__/
+*.pyc
