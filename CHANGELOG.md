@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.5.0](https://github.com/sergio-bershadsky/secondbrain-db/compare/v2.4.0...v2.5.0) (2026-06-26)
+
+
+### Features
+
+* **plugin:** teach Claude to drive sbdb sync (Phase 2) ([#66](https://github.com/sergio-bershadsky/secondbrain-db/issues/66)) ([dc7528f](https://github.com/sergio-bershadsky/secondbrain-db/commit/dc7528f17ce5161550385ca4d187fd2e0f242c59))
+
 ## [2.4.0](https://github.com/sergio-bershadsky/secondbrain-db/compare/v2.3.0...v2.4.0) (2026-05-27)
 
 
